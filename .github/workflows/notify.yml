@@ -1,8 +1,8 @@
 name: Daily Email Notifications
 on:
   schedule:
-    - cron: '0 1 * * *'  # 08:00 น. เวลาไทย (UTC+7)
-  workflow_dispatch:      # รันมือได้
+    - cron: '0 1 * * *'
+  workflow_dispatch:
 
 jobs:
   notify:
@@ -12,6 +12,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install dependencies
+        run: npm ci
       - name: Send notifications
         env:
           RESEND_API_KEY:            ${{ secrets.RESEND_API_KEY }}
