@@ -13,11 +13,9 @@ jobs:
         with:
           node-version: 20
       - name: Install dependencies
-        run: npm ci
+        run: npm ci && npm install firebase-admin
       - name: Send notifications
         env:
-          RESEND_API_KEY:            ${{ secrets.RESEND_API_KEY }}
-          VITE_FIREBASE_API_KEY:     ${{ secrets.VITE_FIREBASE_API_KEY }}
-          VITE_FIREBASE_PROJECT_ID:  ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
-          VITE_FIREBASE_APP_ID:      ${{ secrets.VITE_FIREBASE_APP_ID }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          RESEND_API_KEY:           ${{ secrets.RESEND_API_KEY }}
         run: node scripts/notify.js
