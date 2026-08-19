@@ -1,0 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700;800&display=swap');
+* { box-sizing: border-box; }
+body { font-family: 'Sarabun','Noto Sans Thai',sans-serif; margin:0; }
