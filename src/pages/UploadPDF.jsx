@@ -36,6 +36,20 @@ function findFirst(text, patterns) {
   return "";
 }
 
+// PDF บางไฟล์ฝัง font ที่ตาราง ToUnicode แปลงวรรณยุกต์/ตัวการันต์ (่ ้ ๊ ๋ ์ ฯลฯ) ไม่ครบ
+// ทำให้ข้อความที่ดึงออกมาขาดเครื่องหมายไปแบบสุ่ม (ไม่คงที่แม้เป็นชื่อเดียวกัน) ซึ่งแก้จาก
+// ข้อมูลดิบไม่ได้เพราะตัวอักษรที่ถูกต้องไม่ได้ถูกฝังมาในไฟล์เลย — สำหรับชื่อที่ซ้ำทุกใบ
+// (เช่นผู้ขายที่เซ็นกำกับ) จึงจับคู่แบบไม่สนใจวรรณยุกต์แล้วแทนที่ด้วยคำที่ถูกต้องแทน
+const KNOWN_NAME_FIXES = [
+  { test: /ศ.{0,2}ก.{0,2}ร.{0,2}น.{0,2}ท.{0,2}ร.*น.{0,2}ก/, fix: "ศักรินทร์ (นุ๊ก)" },
+];
+function fixKnownName(str) {
+  for (const { test, fix } of KNOWN_NAME_FIXES) {
+    if (test.test(str)) return fix;
+  }
+  return str;
+}
+
 function parseKOSINText(rawText) {
   const t = rawText.replace(/[ \t]+/g, " ");
   const lines = t.split("\n").map(l => l.trim()).filter(Boolean);
@@ -128,10 +142,10 @@ function parseKOSINText(rawText) {
   ]);
 
   // ผู้ขาย — หาชื่อ Thai หลัง "ผูแทนชวยขาย ลงชื่อ" (ข้ามบรรทัด "Data Not Found")
-  const ownerName = findFirst(t, [
+  const ownerName = fixKnownName(findFirst(t, [
     /ผ.{0,3}แทนช.{0,3}ยขาย\s+ลงช.{0,3}อ\s+([ก-๙][^\n]+)/,  // ชื่อ Thai หลัง ผู้แทน
     /ลงช.{0,3}อ\s+([ก-๙][ก-๙\s()\-]+)/,                      // ชื่อ Thai เท่านั้น
-  ]);
+  ]));
 
   // ---- รายการสินค้า ----
   // format KOSIN: [ลำดับ] จำนวน รหัสสินค้า รายละเอียด ราคา(หน่วยละ) [ราคารวม]
