@@ -168,9 +168,22 @@ function parseKOSINText(rawText) {
     ? lines.slice(headerIdx + 1, footerIdx >= 0 ? footerIdx : lines.length)
     : lines;
 
+  // บาง PDF เลขลำดับ (seq) ของบางแถวหลุดไปอยู่คนละบรรทัดกับข้อมูลแถวเดียวกัน (ตามหลังบรรทัดข้อมูลทันที
+  // เช่น "1 224003 Double Curette... 6,400.00" ตามด้วยบรรทัดโดดๆ "3") ถ้าปล่อยไว้ ตัวเลขลำดับจะหายไป
+  // และทำให้ regex ด้านล่างเข้าใจผิดว่าตัวเลขจำนวน (1) คือลำดับ แล้วรหัสสินค้า (224003) กลายเป็นจำนวนแทน
+  // จึงรวมบรรทัดลำดับที่หลุดโดดๆ กลับเข้ากับบรรทัดข้อมูลก่อนหน้าก่อนเริ่มจับคู่แถวสินค้า
+  const mergedLines = [];
+  for (const line of scanLines) {
+    if (/^\d{1,2}$/.test(line) && mergedLines.length > 0) {
+      mergedLines[mergedLines.length - 1] = `${line} ${mergedLines[mergedLines.length - 1]}`;
+    } else {
+      mergedLines.push(line);
+    }
+  }
+
   const itemLineRe = /^(?:(\d{1,2})\s+)?(\d+(?:\.\d+)?)\s+([A-Za-z0-9][A-Za-z0-9\-\/\.]{2,})\s+(.+?)\s+([\d,]+\.\d{2})(?:\s+([\d,]+\.\d{2}))?$/;
 
-  for (const line of scanLines) {
+  for (const line of mergedLines) {
     const m = line.match(itemLineRe);
     if (!m) continue;
     const qty    = parseFloat(m[2]);
