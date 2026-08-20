@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import * as pdfjsLib from "pdfjs-dist";
-import { createOrder } from "../lib/firestore";
+import { createOrder, getOrderByNumber } from "../lib/firestore";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 
@@ -339,14 +339,37 @@ export default function UploadPDF() {
 
   async function handleSave() {
     setStage("saving");
-    const toastId = toast.loading("กำลังบันทึกใบสั่งซื้อ...");
+    setError("");
+    const checkId = toast.loading("กำลังตรวจสอบใบสั่งซื้อซ้ำ...");
     try {
-      await createOrder(form, user.uid);
-      setStage("done");
-      toast.success("บันทึกใบสั่งซื้อสำเร็จ", { id: toastId });
+      // ป้องกันการบันทึกใบสั่งซื้อเลขที่เดียวกันซ้ำโดยไม่ตั้งใจ (เช่น กดบันทึกซ้ำ หรืออัปโหลด PDF ใบเดิมอีกรอบ)
+      const dup = form.orderNumber ? await getOrderByNumber(form.orderNumber) : null;
+      if (dup) {
+        toast.dismiss(checkId);
+        const proceed = window.confirm(
+          `พบใบสั่งซื้อเลขที่ "${form.orderNumber}" อยู่ในระบบแล้ว\n\nต้องการบันทึกซ้ำอีกฉบับหรือไม่? (กด "ตกลง" เพื่อบันทึกซ้ำ, กด "ยกเลิก" เพื่อไม่บันทึก)`
+        );
+        if (!proceed) {
+          setStage("review");
+          toast.info("ยกเลิกการบันทึก — พบใบสั่งซื้อเลขที่ซ้ำ");
+          return;
+        }
+      } else {
+        toast.dismiss(checkId);
+      }
+
+      const saveId = toast.loading("กำลังบันทึกใบสั่งซื้อ...");
+      try {
+        await createOrder(form, user.uid);
+        setStage("done");
+        toast.success("บันทึกใบสั่งซื้อสำเร็จ", { id: saveId });
+      } catch (e) {
+        setError("บันทึกไม่สำเร็จ: " + e.message);
+        toast.error("บันทึกไม่สำเร็จ: " + e.message, { id: saveId });
+        setStage("review");
+      }
     } catch (e) {
-      setError("บันทึกไม่สำเร็จ: " + e.message);
-      toast.error("บันทึกไม่สำเร็จ: " + e.message, { id: toastId });
+      toast.error("ตรวจสอบข้อมูลซ้ำไม่สำเร็จ: " + e.message, { id: checkId });
       setStage("review");
     }
   }

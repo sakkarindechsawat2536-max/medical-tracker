@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import { getOrderItems, recordDelivery, getDeliveries } from "../lib/firestore";
+import { getOrderItems, recordDelivery, getDeliveries, deleteOrder } from "../lib/firestore";
 import { StatusPill, DaysBadge } from "../components/StatusPill";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
@@ -74,13 +74,36 @@ function DeliveryModal({ item, orderId, onClose, onSaved }) {
 
 export default function OrderDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const toast = useToast();
+  const { user, isManager } = useAuth();
   const [order,     setOrder]     = useState(null);
   const [items,     setItems]     = useState([]);
   const [deliveries,setDeliveries]= useState([]);
   const [loading,   setLoading]   = useState(true);
   const [error,     setError]     = useState("");
   const [modal,     setModal]     = useState(null);
+  const [deleting,  setDeleting]  = useState(false);
+
+  async function handleDeleteOrder() {
+    if (!order) return;
+    const canDelete = isManager || order.ownerId === user?.uid;
+    if (!canDelete) { toast.error("คุณไม่มีสิทธิ์ลบใบสั่งซื้อนี้"); return; }
+    const ok = window.confirm(
+      `ยืนยันลบใบสั่งซื้อเลขที่ "${order.orderNumber}" (${order.hospital || "-"})?\n\nการลบจะลบรายการสินค้าและประวัติการส่งมอบที่เกี่ยวข้องทั้งหมดไปด้วย และไม่สามารถกู้คืนได้`
+    );
+    if (!ok) return;
+    setDeleting(true);
+    const toastId = toast.loading("กำลังลบใบสั่งซื้อ...");
+    try {
+      await deleteOrder(id);
+      toast.success("ลบใบสั่งซื้อสำเร็จ", { id: toastId });
+      navigate("/orders");
+    } catch (e) {
+      toast.error(`ลบไม่สำเร็จ: ${e?.message || e}`, { id: toastId });
+      setDeleting(false);
+    }
+  }
 
   async function load() {
     setLoading(true); setError("");
@@ -135,10 +158,18 @@ export default function OrderDetail() {
             <StatusPill status={order.status}/><DaysBadge dueDate={order.dueDate} status={order.status}/>
           </div>
         </div>
-        <button onClick={()=>setModal(items.find(i=>i.status!=="completed")||items[0])}
-          className="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-600 cursor-pointer self-start">
-          + บันทึกการส่งมอบ
-        </button>
+        <div className="flex gap-2 self-start">
+          {(isManager || order.ownerId === user?.uid) && (
+            <button onClick={handleDeleteOrder} disabled={deleting}
+              className="bg-red-50 text-red-600 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-red-100 cursor-pointer disabled:opacity-50">
+              {deleting ? "กำลังลบ..." : "ลบใบสั่งซื้อ"}
+            </button>
+          )}
+          <button onClick={()=>setModal(items.find(i=>i.status!=="completed")||items[0])}
+            className="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-600 cursor-pointer">
+            + บันทึกการส่งมอบ
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">

@@ -1,8 +1,28 @@
 import {
-  collection, doc, addDoc, updateDoc, getDoc, getDocs,
+  collection, doc, addDoc, updateDoc, getDoc, getDocs, deleteDoc,
   query, where, orderBy, serverTimestamp, setDoc,
 } from "firebase/firestore";
 import { db } from "./firebase";
+
+// ตรวจสอบว่ามีใบสั่งซื้อเลขที่นี้อยู่ในระบบแล้วหรือยัง (ป้องกันการบันทึกซ้ำโดยไม่ตั้งใจ)
+export async function getOrderByNumber(orderNumber) {
+  if (!orderNumber) return null;
+  const snap = await getDocs(query(collection(db, "purchaseOrders"), where("orderNumber", "==", orderNumber)));
+  return snap.empty ? null : { id: snap.docs[0].id, ...snap.docs[0].data() };
+}
+
+// ลบใบสั่งซื้อพร้อมรายการสินค้าและประวัติการส่งมอบที่ผูกอยู่ทั้งหมด (ลบแล้วกู้คืนไม่ได้)
+export async function deleteOrder(orderId) {
+  const [itemsSnap, deliveriesSnap] = await Promise.all([
+    getDocs(query(collection(db, "orderItems"), where("orderId", "==", orderId))),
+    getDocs(query(collection(db, "deliveries"), where("orderId", "==", orderId))),
+  ]);
+  await Promise.all([
+    ...itemsSnap.docs.map(d => deleteDoc(d.ref)),
+    ...deliveriesSnap.docs.map(d => deleteDoc(d.ref)),
+  ]);
+  await deleteDoc(doc(db, "purchaseOrders", orderId));
+}
 
 export async function createOrder(data, userId) {
   const ref = await addDoc(collection(db, "purchaseOrders"), {
