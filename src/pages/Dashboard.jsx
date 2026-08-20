@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useOrders } from "../hooks/useOrders";
 import { StatusPill, DaysBadge } from "../components/StatusPill";
 import { useAuth } from "../context/AuthContext";
-import { effectiveStatus } from "../lib/orderStatus";
+import { effectiveStatus, isOverdue } from "../lib/orderStatus";
 
 const fmt = d => d ? new Date(d?.toDate?d.toDate():d).toLocaleDateString("th-TH",{day:"numeric",month:"short",year:"numeric"}) : "—";
 
@@ -11,11 +11,16 @@ export default function Dashboard() {
   const { profile } = useAuth();
   const { orders, loading, error, refresh } = useOrders();
 
+  // "เกินกำหนดส่ง" กับ "ส่งบางส่วน/รอดำเนินการ/ส่งครบแล้ว" เป็นคนละมิติกัน นับแยกกันไม่ให้ทับกัน
+  // ใบสั่งซื้อใบเดียวกันที่ทั้งเกินกำหนดส่งแล้ว และส่งของไปบางส่วนแล้ว ต้องถูกนับทั้งสองยอด ไม่ใช่นับได้แค่ยอดเดียว
+  // (ก่อนหน้านี้ใช้ effectiveStatus ซึ่งให้ "เกินกำหนดส่ง" มาก่อนเสมอ ทำให้ใบที่เกินกำหนด+ส่งบางส่วนไปนับใน
+  // "เกินกำหนดส่ง" อย่างเดียว การ์ด "ส่งบางส่วน" เลยแสดง 0 ทั้งที่มีรายการส่งบางส่วนจริงอยู่)
   const stats = useMemo(() => {
     const s = { overdue:0, partial:0, pending:0, completed:0 };
     orders.forEach(o => {
-      const st = effectiveStatus(o);
-      if (st in s) s[st]++;
+      if (isOverdue(o)) s.overdue++;
+      const real = o.status || "pending";
+      if (real === "partial" || real === "pending" || real === "completed") s[real]++;
     });
     return s;
   }, [orders]);
