@@ -1,8 +1,8 @@
-name: Daily Email Notifications
+name: Daily Email Notifications (Gmail)
 on:
   schedule:
-    - cron: '0 1 * * *'
-  workflow_dispatch:
+    - cron: '0 1 * * *'   # 08:00 น. เวลาไทย (UTC+7 = UTC 01:00)
+  workflow_dispatch:        # รันด้วยตนเองได้จาก GitHub Actions tab
 
 jobs:
   notify:
@@ -12,10 +12,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+
       - name: Install dependencies
-        run: npm ci && npm install firebase-admin
-      - name: Send notifications
+        run: npm ci && npm install firebase-admin nodemailer
+
+      - name: Send Gmail notifications
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          RESEND_API_KEY:           ${{ secrets.RESEND_API_KEY }}
+          GMAIL_USER:               ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:       ${{ secrets.GMAIL_APP_PASSWORD }}
         run: node scripts/notify.js
