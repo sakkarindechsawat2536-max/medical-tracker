@@ -85,9 +85,9 @@ export default function Orders() {
           </div>
         : filtered.length===0 ? <div className="p-8 text-center text-slate-400 text-sm">ไม่พบรายการ</div>
         : <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[720px]">
+          <table className="w-full text-sm min-w-[820px]">
             <thead><tr className="bg-slate-50 border-b-2 border-slate-200">
-              {["เลขที่ใบสั่งซื้อ","โรงพยาบาล / แผนก","กำหนดส่ง","สถานะ",""].map(h=>(
+              {["เลขที่ใบสั่งซื้อ","วันที่ออกใบสั่ง","โรงพยาบาล / แผนก","กำหนดส่ง","สถานะ",""].map(h=>(
                 <th key={h} className="text-left px-4 py-3 text-xs font-bold text-slate-400">{h}</th>
               ))}
             </tr></thead>
@@ -107,6 +107,7 @@ export default function Orders() {
                   </div>
                   <div className="text-xs text-slate-400">{o.contractNumber}</div>
                 </td>
+                <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmt(o.orderDate)}</td>
                 <td className="px-4 py-3"><div className="font-semibold text-slate-800">{o.hospital}</div><div className="text-xs text-slate-400">{o.department} · {o.contactPerson}</div></td>
                 <td className="px-4 py-3"><div className="text-xs text-slate-400 mb-1">{fmt(o.dueDate)}</div><DaysBadge dueDate={o.dueDate} status={o.status}/></td>
                 <td className="px-4 py-3"><StatusPill status={effectiveStatus(o)}/></td>

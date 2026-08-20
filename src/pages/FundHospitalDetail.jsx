@@ -6,6 +6,7 @@ import { useToast } from "../context/ToastContext";
 import { fundOrderAllocated, fundOrderStatus, FundStatusPill } from "../components/StatusPill";
 import { deleteFundOrder } from "../lib/firestore";
 import FundOrderModal from "../components/FundOrderModal";
+import UseFundModal from "../components/UseFundModal";
 
 const fmtMoney = n => (n === null || n === undefined || isNaN(n)) ? "–" :
   n.toLocaleString("en-US", { minimumFractionDigits: n % 1 === 0 ? 0 : 2, maximumFractionDigits: 2 });
@@ -23,6 +24,7 @@ export default function FundHospitalDetail() {
   const { user, isManager } = useAuth();
   const toast = useToast();
   const [modal, setModal] = useState(null); // {mode:'add'|'edit', order?}
+  const [useOpen, setUseOpen] = useState(false);
   const [deptFilter, setDeptFilter] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
 
@@ -88,29 +90,33 @@ export default function FundHospitalDetail() {
       <Link to="/fund" className="text-blue-600 text-sm font-semibold hover:underline">← กลับรายชื่อโรงพยาบาล</Link>
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3 mt-4 mb-5">
         <h1 className="text-2xl font-extrabold text-slate-800 break-words">{hospital}</h1>
-        <button onClick={() => setModal({ mode:"add" })}
-          className="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-600 cursor-pointer self-start">
-          + เพิ่มรายการ
-        </button>
+        <div className="flex gap-2 self-start">
+          <button onClick={() => setUseOpen(true)}
+            className="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-600 transition cursor-pointer">
+            − ใช้เงินกัน
+          </button>
+          <button onClick={() => setModal({ mode:"add" })}
+            className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-700 transition cursor-pointer">
+            + เพิ่มรายการ
+          </button>
+        </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 p-5 mb-5">
-        <div className="h-4 rounded-full bg-slate-100 overflow-hidden flex mb-3">
-          <div className="h-full bg-amber-500" style={{ width: `${usedPct}%` }} />
-          <div className="h-full bg-teal-600" style={{ width: `${100 - usedPct}%` }} />
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1.2fr] gap-3 sm:gap-4 mb-5">
+        <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
+          <div className="text-[11px] font-semibold text-slate-400 mb-1.5">เงินกันทั้งหมด</div>
+          <div className="text-xl sm:text-2xl font-black leading-none text-slate-800 font-mono">฿{fmtMoney(totals.allocated)}</div>
         </div>
-        <div className="flex gap-6 sm:gap-8 flex-wrap">
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">เงินกันทั้งหมด</div>
-            <div className="font-mono font-bold text-lg text-slate-800">฿{fmtMoney(totals.allocated)}</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">ใช้ไปแล้ว</div>
-            <div className="font-mono font-bold text-lg text-amber-600">฿{fmtMoney(totals.deducted)}</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">คงเหลือ</div>
-            <div className={`font-mono font-bold text-lg ${totals.remaining<0?"text-red-600":"text-teal-700"}`}>฿{fmtMoney(totals.remaining)}</div>
+        <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm">
+          <div className="text-[11px] font-semibold text-slate-400 mb-1.5">ใช้ไปแล้ว</div>
+          <div className="text-xl sm:text-2xl font-black leading-none text-amber-600 font-mono">฿{fmtMoney(totals.deducted)}</div>
+        </div>
+        <div className={`rounded-2xl p-4 sm:p-5 shadow-sm ${totals.remaining<0 ? "bg-gradient-to-br from-red-500 to-red-600" : "bg-gradient-to-br from-teal-600 to-teal-700"}`}>
+          <div className="text-[11px] font-semibold text-white/80 mb-1.5">คงเหลือ</div>
+          <div className="text-xl sm:text-2xl font-black leading-none text-white font-mono mb-3">฿{fmtMoney(totals.remaining)}</div>
+          <div className="h-2 rounded-full bg-black/15 overflow-hidden flex">
+            <div className="h-full bg-white/90 rounded-l-full" style={{ width: `${usedPct}%` }} />
+            <div className="h-full bg-transparent" style={{ width: `${100 - usedPct}%` }} />
           </div>
         </div>
       </div>
@@ -187,6 +193,10 @@ export default function FundHospitalDetail() {
       )}
       {modal?.mode === "edit" && (
         <FundOrderModal order={modal.order} onClose={() => setModal(null)} onSaved={refresh} />
+      )}
+      {useOpen && (
+        <UseFundModal hospitals={[{ name: hospital, remaining: totals.remaining }]} defaultHospital={hospital}
+          onClose={() => setUseOpen(false)} onSaved={refresh} />
       )}
     </div>
   );

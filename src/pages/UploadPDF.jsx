@@ -77,6 +77,8 @@ function parseKOSINText(rawText) {
       if (/^[A-Z]\d{2,}[A-Z][\d\-]+$/.test(above)) quoteNumber = above; // เลขเสนอราคาลอยขึ้นไปอีกบรรทัด
     }
   }
+  // บาง PDF (เช่นใบสั่งประเภทคลินิก) พิมพ์ "-" เป็นตัวคั่นว่างในช่องนี้แทนเลขจริง — ไม่ใช่เลขที่ใบสั่ง กันไว้ไม่ให้จับผิด
+  if (orderNumber && !/[A-Za-z0-9ก-๙]{2,}/.test(orderNumber)) orderNumber = "";
   // fallback ด้วย regex กว้างๆ ถ้าหาจากบรรทัดไม่เจอ (รองรับทั้ง PO-xxx และ รพ-xxx)
   if (!orderNumber) orderNumber = findFirst(t, [/\b(PO[\w\-]+)/i, /(รพ[\d\.]+[\d\-]+)/, /UNIT\s+No\.?\s+([\d\-]+)/i]);
   if (!quoteNumber) quoteNumber = findFirst(t, [/([A-Z]\d{2,}[A-Z][\d\-]+)/]);
@@ -286,6 +288,16 @@ async function extractFundFields(b64) {
     return items.filter(it => it.top >= topMin && it.top <= topMax).sort((a, b) => a.x - b.x);
   }
 
+  // เลขที่ใบสั่ง (label "No." บนฟอร์ม) — ดึงแบบอิงตำแหน่งซ้าย-ขวาบนแถวเดียวกัน แม่นยำกว่าอ่านจาก
+  // ข้อความที่ต่อบรรทัดไว้แล้ว ใช้เป็นตัวช่วยยืนยัน/ทดแทนเมื่อ parseKOSINText ดึงเลขที่ไม่ได้หรือได้ค่าที่ไม่น่าใช่เลขจริง
+  let orderNo = "";
+  const noItem = items.find(it => it.text === "No.");
+  if (noItem) {
+    const sameRow = wordsNear(noItem.top - 4, noItem.top + 4).filter(w => w.x > noItem.x);
+    if (sameRow.length) orderNo = sameRow[0].text.trim();
+  }
+  if (orderNo && !/[A-Za-z0-9ก-๙]{2,}/.test(orderNo)) orderNo = ""; // กันค่าขยะ เช่น "-" เดี่ยวๆ ที่พิมพ์เป็นตัวคั่นว่างในฟอร์ม
+
   // แผนก: หา label ในตารางกลุ่มสินค้าที่มีตัวเลข (เครื่องหมายติ๊ก) ต่อท้ายบนแถวเดียวกัน
   let pdfDeptLabel = null;
   for (const it of items) {
@@ -322,7 +334,7 @@ async function extractFundFields(b64) {
   if (salesPromo === 0)     warnings.push('ไม่พบยอด "ค่าใช้จ่ายส่งเสริมการขาย" (เงินกันซื้อของ) ในไฟล์ กรุณากรอกด้วยตนเอง');
   if (academicSupport === 0) warnings.push('ไม่พบยอด "สก วิชาการ/ดูงาน" (เงินกันค่าเดินทาง) ในไฟล์ — เว้นว่างไว้ กรุณาตรวจสอบ');
 
-  return { dept, buyFund, travelFund, warnings };
+  return { dept, buyFund, travelFund, orderNo, warnings };
 }
 
 // ---- empty form template ---------------------------------------------------
@@ -408,11 +420,16 @@ export default function UploadPDF() {
       const parsed = parseKOSINText(text);
 
       // ดึงข้อมูล "เงินกันซื้ออุปกรณ์" จาก PDF ใบเดียวกัน (ไม่ทำให้การอ่านใบสั่งซื้อล้มเหลวถ้าดึงส่วนนี้ไม่ได้)
-      let fund = { dept: "", buyFund: 0, travelFund: 0, warnings: [] };
+      // รวมถึงเลขที่ใบสั่งจาก label "No." ที่ดึงแบบอิงตำแหน่ง — ใช้เป็นตัวสำรองเมื่อ parseKOSINText ดึงเลขที่ไม่ได้
+      let fund = { dept: "", buyFund: 0, travelFund: 0, orderNo: "", warnings: [] };
       try {
         fund = await extractFundFields(b64);
       } catch (fundErr) {
-        fund = { dept: "", buyFund: 0, travelFund: 0, warnings: ["ดึงข้อมูลเงินกันจาก PDF ไม่สำเร็จ: " + fundErr.message] };
+        fund = { dept: "", buyFund: 0, travelFund: 0, orderNo: "", warnings: ["ดึงข้อมูลเงินกันจาก PDF ไม่สำเร็จ: " + fundErr.message] };
+      }
+      if (!parsed.orderNumber && fund.orderNo) {
+        parsed.orderNumber = fund.orderNo;
+        parsed.contractNumber = fund.orderNo;
       }
       setForm({
         ...parsed,
