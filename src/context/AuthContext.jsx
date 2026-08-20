@@ -35,8 +35,13 @@ export function AuthProvider({ children }) {
   const isAdmin     = profile?.role === "admin";
   const isManager   = ["admin","manager"].includes(profile?.role);
 
+  // อัปเดต profile ในหน่วยความจำทันทีหลังบันทึกข้อมูลผู้ใช้ลง Firestore ที่อื่น (เช่นหน้าการแจ้งเตือน)
+  // profile ที่นี่โหลดครั้งเดียวตอน login เท่านั้น ถ้าไม่เรียกฟังก์ชันนี้หลัง updateDoc ค่าที่เพิ่งบันทึกจะไม่ปรากฏ
+  // จนกว่าจะออกจากระบบแล้วเข้าใหม่ — ทำให้ดูเหมือนบันทึกไม่ติดเวลาย้ายไปหน้าอื่นแล้วย้อนกลับมา
+  const updateProfile = (patch) => setProfile(p => (p ? { ...p, ...patch } : p));
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, login, logout, isAdmin, isManager }}>
+    <AuthContext.Provider value={{ user, profile, loading, login, logout, isAdmin, isManager, updateProfile }}>
       {children}
     </AuthContext.Provider>
   );

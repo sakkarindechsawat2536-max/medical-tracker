@@ -40,7 +40,7 @@ const SCHEDULE_OPTIONS = [
 ];
 
 export default function Notifications() {
-  const { user, profile } = useAuth();
+  const { user, profile, updateProfile } = useAuth();
   const toast = useToast();
   const [lineToken,   setLineToken]   = useState(profile?.lineToken || "");
   const [notifyEmail, setNotifyEmail] = useState(profile?.notifyEmail || profile?.email || "");
@@ -68,10 +68,14 @@ export default function Notifications() {
     setSaving(true);
     const toastId = toast.loading("กำลังบันทึกการตั้งค่า...");
     try {
-      await updateDoc(doc(db,"users",user.uid), {
+      const patch = {
         lineToken, notifyEmail, emailNotify:emailOn, lineNotify:lineOn,
         notifySchedule:schedule, notifyTime,
-      });
+      };
+      await updateDoc(doc(db,"users",user.uid), patch);
+      // profile ใน AuthContext โหลดครั้งเดียวตอน login เท่านั้น — อัปเดตในหน่วยความจำทันที
+      // ไม่งั้นย้ายไปหน้าอื่นแล้วย้อนกลับมาหน้านี้ ค่าที่เพิ่งบันทึกจะหายไป (กลับไปเป็นค่าตอน login)
+      updateProfile?.(patch);
       setSaved(true); setTimeout(()=>setSaved(false),2000);
       toast.success("บันทึกการตั้งค่าสำเร็จ", { id: toastId });
     } catch (e) {
