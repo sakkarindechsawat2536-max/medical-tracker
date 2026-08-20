@@ -1,0 +1,18 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ไฟล์แนบของการส่งมอบ (รูปภาพ / ใบส่งของ / PDF) — เก็บที่ deliveries/{orderId}/{itemId}/{fileName}
+    match /deliveries/{orderId}/{itemId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|application/pdf');
+    }
+
+    // กันไม่ให้เข้าถึงพาธอื่นนอกเหนือจากด้านบน
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // ดึง role ของผู้ใช้ปัจจุบันจากเอกสาร users/{uid}
+    function myRole() {
+      return isSignedIn()
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : null;
+    }
+
+    function isManager() {
+      return myRole() in ['admin', 'manager'];
+    }
+
+    // เจ้าของใบสั่งซื้อ (ใช้เช็คสิทธิ์ลบ orderItems / deliveries ที่ผูกกับใบสั่งซื้อนั้น)
+    function isOwnerOfOrder(orderId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/purchaseOrders/$(orderId)).data.ownerId == request.auth.uid;
+    }
+
+    // ---------- users ----------
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && (request.auth.uid == uid || isManager());
+      allow delete: if false;
+    }
+
+    // ---------- purchaseOrders ----------
+    match /purchaseOrders/{orderId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isManager());
+      allow delete: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isManager());
+    }
+
+    // ---------- orderItems ----------
+    match /orderItems/{itemId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn() && (isManager() || isOwnerOfOrder(resource.data.orderId));
+    }
+
+    // ---------- deliveries ----------
+    match /deliveries/{deliveryId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.recordedBy == request.auth.uid;
+      allow update: if false;
+      allow delete: if isSignedIn() && (isManager() || isOwnerOfOrder(resource.data.orderId));
+    }
+
+    // ---------- notifications ----------
+    match /notifications/{notifId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isManager());
+      allow create: if isSignedIn();
+      allow update: if false;
+      allow delete: if isManager();
+    }
+  }
+}

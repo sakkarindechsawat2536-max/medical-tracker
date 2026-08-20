@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
@@ -9,20 +9,100 @@ import { useToast } from "../context/ToastContext";
 
 const fmt = d => d ? new Date(d?.toDate?d.toDate():d).toLocaleDateString("th-TH",{day:"numeric",month:"short",year:"numeric"}) : "—";
 
+// ---------- ไฟล์แนบ: เก็บเป็น base64 ตรงใน Firestore เลย (ไม่ใช้ Firebase Storage เพราะต้องอัปเกรดแพ็กเกจ Blaze) ----------
+// ข้อจำกัด: Firestore เก็บได้เอกสารละไม่เกิน 1MB จึงต้องบีบอัดรูปภาพและจำกัดขนาดไฟล์แนบให้เล็ก
+const MAX_FILES        = 3;
+const MAX_FILE_BYTES   = 350 * 1024;   // ต่อไฟล์ (หลังบีบอัด/แปลงแล้ว)
+const MAX_TOTAL_BYTES  = 700 * 1024;   // รวมทุกไฟล์ต่อ 1 การส่งมอบ
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("อ่านไฟล์ไม่สำเร็จ"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function dataUrlBytes(dataUrl) {
+  const base64 = dataUrl.split(",")[1] || "";
+  return Math.ceil(base64.length * 0.75);
+}
+
+async function compressImage(file, maxDim, quality) {
+  const dataUrl = await readFileAsDataURL(file);
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error("อ่านรูปภาพไม่สำเร็จ")); img.src = dataUrl; });
+  let { width, height } = img;
+  if (width > maxDim || height > maxDim) {
+    const scale = maxDim / Math.max(width, height);
+    width = Math.round(width * scale); height = Math.round(height * scale);
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = width; canvas.height = height;
+  canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+// แปลงไฟล์ที่เลือกให้เป็น attachment ({name,type,dataUrl}) พร้อมบีบอัดรูปภาพจนกว่าจะเล็กพอ
+async function fileToAttachment(file) {
+  let dataUrl;
+  if (file.type.startsWith("image/")) {
+    for (const [maxDim, quality] of [[1400,0.75],[1000,0.55],[800,0.4],[600,0.35]]) {
+      dataUrl = await compressImage(file, maxDim, quality);
+      if (dataUrlBytes(dataUrl) <= MAX_FILE_BYTES) break;
+    }
+  } else {
+    dataUrl = await readFileAsDataURL(file);
+  }
+  const bytes = dataUrlBytes(dataUrl);
+  if (bytes > MAX_FILE_BYTES) {
+    throw new Error(`ไฟล์ "${file.name}" ขนาดใหญ่เกินไป (${Math.round(bytes/1024)}KB) — รองรับไฟล์แนบไม่เกิน ${Math.round(MAX_FILE_BYTES/1024)}KB ต่อไฟล์`);
+  }
+  return { name: file.name, type: file.type || "", dataUrl, bytes };
+}
+
 function DeliveryModal({ item, orderId, onClose, onSaved }) {
   const { user } = useAuth();
   const toast = useToast();
   const [form, setForm] = useState({ quantity:1, deliveryDate:new Date().toISOString().split("T")[0], receiverName:"", deliveryNoteNumber:"", trackingNumber:"", notes:"" });
   const [saving, setSaving] = useState(false);
   const [done,   setDone]   = useState(false);
+  const [files,  setFiles]  = useState([]);
+  const fileInputRef = useRef(null);
   const rem = item.quantity - item.delivered;
   const upd = k => v => setForm(f=>({...f,[k]:v}));
 
+  function handleFilePick(e) {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = ""; // ให้เลือกไฟล์เดิมซ้ำได้อีกครั้งถ้าลบออกไปแล้ว
+    if (!picked.length) return;
+    setFiles(prev => {
+      const next = [...prev, ...picked];
+      if (next.length > MAX_FILES) { toast.error(`แนบไฟล์ได้สูงสุด ${MAX_FILES} ไฟล์ (ไฟล์เล็กเท่านั้น เพราะเก็บในฐานข้อมูลโดยตรง)`); return prev; }
+      return next;
+    });
+  }
+  function removeFile(idx) { setFiles(prev => prev.filter((_, i) => i !== idx)); }
+
   async function save() {
     setSaving(true);
-    const toastId = toast.loading("กำลังบันทึกการส่งมอบ...");
+    const hasFiles = files.length > 0;
+    const toastId = toast.loading(hasFiles ? "กำลังประมวลผลไฟล์แนบและบันทึกการส่งมอบ..." : "กำลังบันทึกการส่งมอบ...");
     try {
-      await recordDelivery(item.id, orderId, form, user.uid);
+      let attachments = [];
+      if (hasFiles) {
+        let total = 0;
+        for (const file of files) {
+          const att = await fileToAttachment(file);
+          total += att.bytes;
+          if (total > MAX_TOTAL_BYTES) {
+            throw new Error(`ไฟล์แนบรวมกันใหญ่เกินไป (เกิน ${Math.round(MAX_TOTAL_BYTES/1024)}KB) กรุณาลดจำนวนไฟล์หรือใช้รูปที่มีขนาดเล็กลง`);
+          }
+          attachments.push({ name: att.name, type: att.type, dataUrl: att.dataUrl });
+        }
+      }
+      await recordDelivery(item.id, orderId, { ...form, attachments }, user.uid);
       setDone(true);
       toast.success("บันทึกการส่งมอบสำเร็จ", { id: toastId });
       setTimeout(()=>{onSaved();onClose();},1000);
@@ -56,8 +136,25 @@ function DeliveryModal({ item, orderId, onClose, onSaved }) {
                 <input value={form[k]} onChange={e=>upd(k)(e.target.value)} placeholder={ph}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none"/></div>
             ))}
-            <div className="border-2 border-dashed border-slate-200 rounded-xl p-4 text-center text-slate-400 text-sm cursor-pointer hover:border-slate-400 transition">
-              📎 แนบรูปภาพ / ใบส่งของ / PDF
+            <div>
+              <input ref={fileInputRef} type="file" multiple accept="image/*,.pdf,application/pdf"
+                onChange={handleFilePick} className="hidden" />
+              <button type="button" onClick={()=>fileInputRef.current?.click()}
+                className="w-full border-2 border-dashed border-slate-200 rounded-xl p-4 text-center text-slate-400 text-sm cursor-pointer hover:border-slate-400 transition">
+                📎 แนบรูปภาพ / ใบส่งของ / PDF
+              </button>
+              <p className="text-[11px] text-slate-400 mt-1">รองรับไฟล์เล็ก (สูงสุด {MAX_FILES} ไฟล์ ระบบจะบีบอัดรูปภาพให้อัตโนมัติ)</p>
+              {files.length > 0 && (
+                <div className="mt-2 flex flex-col gap-1.5">
+                  {files.map((f, idx) => (
+                    <div key={idx} className="flex items-center justify-between gap-2 bg-slate-50 rounded-lg px-3 py-1.5 text-xs">
+                      <span className="truncate text-slate-600">{f.name}</span>
+                      <button type="button" onClick={()=>removeFile(idx)}
+                        className="text-slate-400 hover:text-red-500 cursor-pointer flex-shrink-0">✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex gap-3 mt-5 justify-end">
@@ -84,6 +181,7 @@ export default function OrderDetail() {
   const [error,     setError]     = useState("");
   const [modal,     setModal]     = useState(null);
   const [deleting,  setDeleting]  = useState(false);
+  const [preview,   setPreview]   = useState(null);
 
   async function handleDeleteOrder() {
     if (!order) return;
@@ -218,7 +316,7 @@ export default function OrderDetail() {
           <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[640px]">
             <thead><tr className="bg-slate-50 border-b border-slate-200">
-              {["วันที่ส่ง","จำนวน","ผู้รับ","เลขใบส่งของ","หมายเลขพัสดุ","หมายเหตุ"].map(h=>(
+              {["วันที่ส่ง","จำนวน","ผู้รับ","เลขใบส่งของ","หมายเลขพัสดุ","หมายเหตุ","ไฟล์แนบ"].map(h=>(
                 <th key={h} className="text-left px-4 py-3 text-xs font-bold text-slate-400">{h}</th>
               ))}
             </tr></thead>
@@ -230,6 +328,20 @@ export default function OrderDetail() {
                 <td className="px-4 py-3 font-mono text-blue-700">{d.deliveryNoteNumber||"—"}</td>
                 <td className="px-4 py-3 font-mono text-slate-500">{d.trackingNumber||"—"}</td>
                 <td className="px-4 py-3 text-slate-400">{d.notes||"—"}</td>
+                <td className="px-4 py-3">
+                  {d.attachments?.length ? (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {d.attachments.map((a,i)=> a.type?.startsWith("image/") ? (
+                        <img key={i} src={a.dataUrl} alt={a.name} title={a.name}
+                          className="w-9 h-9 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-80 transition"
+                          onClick={()=>setPreview(a.dataUrl)} />
+                      ) : (
+                        <a key={i} href={a.dataUrl} download={a.name} title={a.name}
+                          className="text-blue-600 hover:underline text-xs truncate max-w-[110px]">📎 {a.name}</a>
+                      ))}
+                    </div>
+                  ) : "—"}
+                </td>
               </tr>
             ))}</tbody>
           </table>
@@ -238,6 +350,13 @@ export default function OrderDetail() {
       )}
 
       {modal && <DeliveryModal item={modal} orderId={id} onClose={()=>setModal(null)} onSaved={load}/>}
+
+      {preview && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={()=>setPreview(null)}>
+          <img src={preview} alt="ไฟล์แนบ" className="max-w-full max-h-full rounded-lg shadow-2xl" onClick={e=>e.stopPropagation()} />
+          <button onClick={()=>setPreview(null)} className="absolute top-4 right-4 text-white text-2xl cursor-pointer">✕</button>
+        </div>
+      )}
     </div>
   );
 }
