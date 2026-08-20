@@ -5,6 +5,7 @@ import { StatusPill, DaysBadge } from "../components/StatusPill";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { deleteOrder } from "../lib/firestore";
+import { effectiveStatus } from "../lib/orderStatus";
 
 const fmt = d => d ? new Date(d?.toDate?d.toDate():d).toLocaleDateString("th-TH",{day:"numeric",month:"short",year:"numeric"}) : "—";
 const FILTERS = [{v:"all",l:"ทั้งหมด"},{v:"overdue",l:"เกินกำหนด"},{v:"partial",l:"ส่งบางส่วน"},{v:"pending",l:"รอดำเนินการ"},{v:"completed",l:"ส่งครบแล้ว"}];
@@ -19,7 +20,7 @@ export default function Orders() {
 
   const filtered = orders.filter(o => {
     const m = !q || o.orderNumber?.toLowerCase().includes(q) || o.hospital?.toLowerCase().includes(q);
-    return m && (fs==="all" || o.status===fs);
+    return m && (fs==="all" || effectiveStatus(o)===fs);
   });
 
   // หาเลขที่ใบสั่งซื้อที่ซ้ำกันในระบบ เพื่อขึ้นป้ายเตือนให้เห็นชัด
@@ -108,7 +109,7 @@ export default function Orders() {
                 </td>
                 <td className="px-4 py-3"><div className="font-semibold text-slate-800">{o.hospital}</div><div className="text-xs text-slate-400">{o.department} · {o.contactPerson}</div></td>
                 <td className="px-4 py-3"><div className="text-xs text-slate-400 mb-1">{fmt(o.dueDate)}</div><DaysBadge dueDate={o.dueDate} status={o.status}/></td>
-                <td className="px-4 py-3"><StatusPill status={o.status}/></td>
+                <td className="px-4 py-3"><StatusPill status={effectiveStatus(o)}/></td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     <Link to={`/orders/${o.id}`} className="text-xs font-semibold bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition">ดู</Link>

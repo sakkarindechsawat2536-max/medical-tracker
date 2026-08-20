@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useOrders } from "../hooks/useOrders";
 import { STATUS_META } from "../components/StatusPill";
+import { effectiveStatus } from "../lib/orderStatus";
 
 const WEEKDAYS = ["อา","จ","อ","พ","พฤ","ศ","ส"];
 
@@ -53,9 +54,9 @@ export default function Calendar() {
           {Array.from({length:firstDay}).map((_,i)=><div key={"e"+i}/>)}
           {Array.from({length:daysInMonth},(_,i)=>i+1).map(d=>{
             const items = byDay[d]||[];
-            const hasOverdue = items.some(o=>o.status==="overdue");
-            const hasPartial = items.some(o=>o.status==="partial");
-            const allDone    = items.length>0 && items.every(o=>o.status==="completed");
+            const hasOverdue = items.some(o=>effectiveStatus(o)==="overdue");
+            const hasPartial = items.some(o=>effectiveStatus(o)==="partial");
+            const allDone    = items.length>0 && items.every(o=>effectiveStatus(o)==="completed");
             const isToday    = d===today;
             let bg="bg-slate-50 border-slate-200", dot="";
             if (hasOverdue)      { bg="bg-red-50 border-red-300"; }
@@ -65,12 +66,15 @@ export default function Calendar() {
             return (
               <div key={d} className={`min-h-12 sm:min-h-14 rounded-lg p-1 sm:p-1.5 border ${bg} ${isToday?"ring-2 ring-blue-800 ring-offset-1":""}`}>
                 <div className={`text-xs font-bold ${isToday?"text-blue-800":"text-slate-700"}`}>{d}</div>
-                {items.slice(0,2).map(o=>(
-                  <div key={o.id} className="text-[9px] font-semibold mt-0.5 px-1 py-0.5 rounded truncate"
-                    style={{background:STATUS_META[o.status]?.bg, color:STATUS_META[o.status]?.text}}>
-                    {o.hospital?.replace("รพ.","").substring(0,8)}
-                  </div>
-                ))}
+                {items.slice(0,2).map(o=>{
+                  const st = effectiveStatus(o);
+                  return (
+                    <div key={o.id} className="text-[9px] font-semibold mt-0.5 px-1 py-0.5 rounded truncate"
+                      style={{background:STATUS_META[st]?.bg, color:STATUS_META[st]?.text}}>
+                      {o.hospital?.replace("รพ.","").substring(0,8)}
+                    </div>
+                  );
+                })}
                 {items.length>2 && <div className="text-[9px] text-slate-400 mt-0.5 pl-1">+{items.length-2}</div>}
               </div>
             );

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useOrders } from "../hooks/useOrders";
 import { StatusPill, DaysBadge } from "../components/StatusPill";
 import { useAuth } from "../context/AuthContext";
+import { effectiveStatus } from "../lib/orderStatus";
 
 const fmt = d => d ? new Date(d?.toDate?d.toDate():d).toLocaleDateString("th-TH",{day:"numeric",month:"short",year:"numeric"}) : "—";
 
@@ -10,19 +11,25 @@ export default function Dashboard() {
   const { profile } = useAuth();
   const { orders, loading, error, refresh } = useOrders();
 
-  const stats = useMemo(() => ({
-    overdue:   orders.filter(o=>o.status==="overdue").length,
-    partial:   orders.filter(o=>o.status==="partial").length,
-    pending:   orders.filter(o=>o.status==="pending").length,
-    completed: orders.filter(o=>o.status==="completed").length,
-  }), [orders]);
+  const stats = useMemo(() => {
+    const s = { overdue:0, partial:0, pending:0, completed:0 };
+    orders.forEach(o => {
+      const st = effectiveStatus(o);
+      if (st in s) s[st]++;
+    });
+    return s;
+  }, [orders]);
 
+  // "ต้องดำเนินการ" = เกินกำหนดส่งไปแล้ว (เร่งด่วนที่สุด) หรือกำหนดส่งภายใน 7 วันข้างหน้า และยังไม่เสร็จ/ยกเลิก
   const urgent = useMemo(() =>
     orders.filter(o => {
+      const st = effectiveStatus(o);
+      if (["completed","cancelled"].includes(st)) return false;
+      if (!o.dueDate) return false;
       const d = new Date(o.dueDate?.toDate?o.dueDate.toDate():o.dueDate);
       const days = Math.ceil((d-new Date())/86400000);
-      return days>=0 && days<=7 && !["completed","cancelled"].includes(o.status);
-    }).sort((a,b)=>new Date(a.dueDate)-new Date(b.dueDate)),
+      return days<=7;
+    }).sort((a,b)=>new Date(a.dueDate?.toDate?a.dueDate.toDate():a.dueDate)-new Date(b.dueDate?.toDate?b.dueDate.toDate():b.dueDate)),
   [orders]);
 
   const STATS = [
@@ -79,7 +86,7 @@ export default function Dashboard() {
                   <td className="px-5 py-3 font-bold text-blue-900">{o.orderNumber}</td>
                   <td className="px-5 py-3 text-slate-700">{o.hospital}</td>
                   <td className="px-5 py-3"><div className="text-xs text-slate-400 mb-1">{fmt(o.dueDate)}</div><DaysBadge dueDate={o.dueDate} status={o.status}/></td>
-                  <td className="px-5 py-3"><StatusPill status={o.status}/></td>
+                  <td className="px-5 py-3"><StatusPill status={effectiveStatus(o)}/></td>
                   <td className="px-5 py-3"><Link to={`/orders/${o.id}`} className="text-xs font-semibold text-blue-600 hover:underline">ดูรายละเอียด →</Link></td>
                 </tr>
               ))}</tbody>
