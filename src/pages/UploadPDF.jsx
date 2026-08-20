@@ -173,6 +173,12 @@ async function extractPDFText(b64) {
 
     fullText += lines.join("\n") + "\n";
   }
+
+  // Thai PDF บางไฟล์ใช้ font ที่ไม่มี ToUnicode mapping สำหรับ tone marks (์ ๊ ๋ ฯลฯ)
+  // pdfjs-dist อ่านได้แต่แปลงเป็น □ (U+25A0-U+25FF) หรือ replacement char (U+FFFD)
+  // กรองออกโดยเก็บเฉพาะ ASCII printable + Thai (U+0E00-U+0E7F) + newline
+  fullText = fullText.replace(/[^\x20-\x7E฀-๿\n]/g, "");
+
   return fullText;
 }
 
