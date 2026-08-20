@@ -41,7 +41,7 @@ export default function Orders() {
     const canDelete = isManager || o.ownerId === user?.uid;
     if (!canDelete) { toast.error("คุณไม่มีสิทธิ์ลบใบสั่งซื้อนี้"); return; }
     const ok = window.confirm(
-      `ยืนยันลบใบสั่งซื้อเลขที่ "${o.orderNumber || "-"}" (${o.hospital || "-"})?\n\nการลบจะลบรายการสินค้าและประวัติการส่งมอบที่เกี่ยวข้องทั้งหมดไปด้วย และไม่สามารถกู้คืนได้`
+      `ยืนยันลบใบสั่งซื้อเลขที่ "${o.orderNumber || "-"}" (${o.hospital || "-"})?\n\nการลบจะลบรายการสินค้า ประวัติการส่งมอบ และรายการเงินกันที่ผูกกับใบสั่งซื้อนี้ทั้งหมดไปด้วย และไม่สามารถกู้คืนได้`
     );
     if (!ok) return;
     setDeletingId(o.id);

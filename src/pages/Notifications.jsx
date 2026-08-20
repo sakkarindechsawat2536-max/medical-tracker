@@ -43,6 +43,7 @@ export default function Notifications() {
   const { user, profile } = useAuth();
   const toast = useToast();
   const [lineToken,   setLineToken]   = useState(profile?.lineToken || "");
+  const [notifyEmail, setNotifyEmail] = useState(profile?.notifyEmail || profile?.email || "");
   const [emailOn,     setEmailOn]     = useState(profile?.emailNotify ?? true);
   const [lineOn,      setLineOn]      = useState(profile?.lineNotify ?? false);
   const [schedule,    setSchedule]    = useState(profile?.notifySchedule || ["d30","d15","d7","d3","d1","overdue"]);
@@ -68,7 +69,7 @@ export default function Notifications() {
     const toastId = toast.loading("กำลังบันทึกการตั้งค่า...");
     try {
       await updateDoc(doc(db,"users",user.uid), {
-        lineToken, emailNotify:emailOn, lineNotify:lineOn,
+        lineToken, notifyEmail, emailNotify:emailOn, lineNotify:lineOn,
         notifySchedule:schedule, notifyTime,
       });
       setSaved(true); setTimeout(()=>setSaved(false),2000);
@@ -158,9 +159,14 @@ export default function Notifications() {
 
           {emailOn && <>
             <div className="bg-blue-50 rounded-lg p-3 mb-4">
-              <div className="text-xs font-bold text-blue-700 mb-1">📨 อีเมลปลายทาง</div>
-              <div className="text-sm font-semibold text-blue-900">{profile?.email}</div>
-              <div className="text-xs text-blue-500 mt-1">ใช้อีเมลที่ Login อยู่โดยอัตโนมัติ</div>
+              <div className="text-xs font-bold text-blue-700 mb-1">📨 อีเมลปลายทาง (รับการแจ้งเตือน)</div>
+              <input value={notifyEmail} onChange={e=>setNotifyEmail(e.target.value)}
+                placeholder={profile?.email || "you@example.com"}
+                className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-400 transition bg-white"/>
+              <div className="text-xs text-blue-500 mt-1">
+                ค่าเริ่มต้นคืออีเมลที่ Login อยู่ ({profile?.email}) — แก้ไขได้หากต้องการให้แจ้งเตือนไปยังอีเมลอื่น
+                (ไม่กระทบบัญชีที่ใช้ Login เข้าใช้งานระบบ)
+              </div>
             </div>
             <div className="bg-slate-50 rounded-lg p-3 mb-4">
               <div className="text-xs font-bold text-slate-600 mb-2">ตัวอย่างข้อความที่จะได้รับ:</div>

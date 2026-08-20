@@ -11,15 +11,17 @@ export async function getOrderByNumber(orderNumber) {
   return snap.empty ? null : { id: snap.docs[0].id, ...snap.docs[0].data() };
 }
 
-// ลบใบสั่งซื้อพร้อมรายการสินค้าและประวัติการส่งมอบที่ผูกอยู่ทั้งหมด (ลบแล้วกู้คืนไม่ได้)
+// ลบใบสั่งซื้อพร้อมรายการสินค้า ประวัติการส่งมอบ และรายการเงินกันที่ผูกอยู่ทั้งหมด (ลบแล้วกู้คืนไม่ได้)
 export async function deleteOrder(orderId) {
-  const [itemsSnap, deliveriesSnap] = await Promise.all([
+  const [itemsSnap, deliveriesSnap, fundSnap] = await Promise.all([
     getDocs(query(collection(db, "orderItems"), where("orderId", "==", orderId))),
     getDocs(query(collection(db, "deliveries"), where("orderId", "==", orderId))),
+    getDocs(query(collection(db, "fundOrders"), where("linkedOrderId", "==", orderId))),
   ]);
   await Promise.all([
     ...itemsSnap.docs.map(d => deleteDoc(d.ref)),
     ...deliveriesSnap.docs.map(d => deleteDoc(d.ref)),
+    ...fundSnap.docs.map(d => deleteDoc(d.ref)),
   ]);
   await deleteDoc(doc(db, "purchaseOrders", orderId));
 }
@@ -109,9 +111,13 @@ export async function saveNotificationSettings(uid, data) {
   await updateDoc(doc(db,"users",uid), data);
 }
 
+// ไม่ query แบบ where+orderBy ผสมกัน (เลี่ยงต้องสร้าง composite index บน Firestore Console)
+// — โหลดตาม userId มาแล้วเรียงตามวันที่ฝั่ง client แทน
 export async function getNotifHistory(userId) {
-  const snap = await getDocs(query(collection(db,"notifications"), where("userId","==",userId), orderBy("sentAt","desc")));
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const snap = await getDocs(query(collection(db,"notifications"), where("userId","==",userId)));
+  const toMs = v => v?.toMillis ? v.toMillis() : (v ? new Date(v).getTime() : 0);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => toMs(b.sentAt) - toMs(a.sentAt));
 }
 
 // ---------- เงินกันซื้ออุปกรณ์การแพทย์ (fundOrders) ----------
