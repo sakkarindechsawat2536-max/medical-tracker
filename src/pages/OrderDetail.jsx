@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import { getOrderItems, recordDelivery, getDeliveries } from "../lib/firestore";
+import { getOrderItems, recordDelivery, getDeliveries, resyncOrderStatus } from "../lib/firestore";
 import { StatusPill, DaysBadge } from "../components/StatusPill";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
@@ -228,8 +228,15 @@ export default function OrderDetail() {
       const [snap, itemsData, delData] = await Promise.all([
         getDoc(doc(db,"purchaseOrders",id)), getOrderItems(id), getDeliveries(id),
       ]);
-      if (snap.exists()) setOrder({id:snap.id,...snap.data()});
-      else setOrder(null);
+      if (snap.exists()) {
+        const orderData = { id: snap.id, ...snap.data() };
+        setOrder(orderData);
+        // ใบสั่งซื้อเก่าบางใบอาจเคยถูกคำนวณสถานะรวมผิดพลาดจากบั๊กเวอร์ชันก่อนหน้า แก้ให้ถูกต้องเงียบๆ ตอนเปิดดู
+        // (ไม่มีสิทธิ์แก้ก็แค่ข้ามไป ไม่ต้องรบกวนผู้ใช้ด้วย error ของงานบำรุงรักษาเบื้องหลังแบบนี้)
+        resyncOrderStatus(id, itemsData, orderData.status)
+          .then(fixed => { if (fixed) setOrder(o => o ? { ...o, status: fixed } : o); })
+          .catch(()=>{});
+      } else setOrder(null);
       setItems(itemsData); setDeliveries(delData);
     } catch (e) {
       console.error("โหลดข้อมูลใบสั่งซื้อล้มเหลว:", e);

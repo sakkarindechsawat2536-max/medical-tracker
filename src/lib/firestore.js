@@ -58,6 +58,15 @@ export async function getOrderItems(orderId) {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+// สรุปสถานะรวมของใบสั่งซื้อจากสถานะจริงของ "ทุก" รายการสินค้าพร้อมกัน (ไม่ใช่วนเจอตัวแรกแล้วสรุปทันที)
+// — completed เมื่อทุกรายการส่งครบ, pending เมื่อทุกรายการยังไม่ส่งเลยสักชิ้น, partial ในกรณีอื่นๆ ทั้งหมด
+// (มีอย่างน้อย 1 รายการเริ่มส่ง/ส่งครบแล้ว แต่ไม่ครบทุกรายการ — รวมถึงกรณีบางรายการส่งครบ บางรายการยังไม่แตะเลย)
+function computeOrderStatus(items) {
+  if (items.every(i => i.status === "completed")) return "completed";
+  if (items.every(i => (i.delivered || 0) === 0)) return "pending";
+  return "partial";
+}
+
 export async function recordDelivery(itemId, orderId, data, userId) {
   await addDoc(collection(db, "deliveries"), {
     itemId, orderId, ...data, recordedBy: userId, recordedAt: serverTimestamp(),
@@ -68,16 +77,23 @@ export async function recordDelivery(itemId, orderId, data, userId) {
   const newDelivered = item.delivered + Number(data.quantity);
   const newStatus    = newDelivered >= item.quantity ? "completed" : "partial";
   await updateDoc(ref, { delivered: newDelivered, status: newStatus, updatedAt: serverTimestamp() });
-  // sync order status
+
+  // ดึงข้อมูลล่าสุดของทุกรายการ (รวมรายการนี้ที่เพิ่งอัปเดตไป) มาสรุปสถานะรวมของใบสั่งซื้อใหม่
   const items = await getOrderItems(orderId);
-  let status = "completed";
-  for (const i of items) {
-    if (i.id === itemId) { if (newStatus !== "completed") status = newStatus; continue; }
-    if (i.status === "overdue") { status = "overdue"; break; }
-    if (i.status === "partial") { status = "partial"; break; }
-    if (i.status === "pending") status = "pending";
-  }
+  const status = computeOrderStatus(items);
   await updateDoc(doc(db,"purchaseOrders",orderId), { status, updatedAt: serverTimestamp() });
+}
+
+// แก้ไขสถานะใบสั่งซื้อเก่าที่เคยถูกคำนวณผิดพลาดจากบั๊กของเวอร์ชันก่อนหน้าให้ถูกต้องอัตโนมัติ (เงียบๆ ไม่แจ้งเตือน)
+// เรียกตอนเปิดดูหน้ารายละเอียดใบสั่งซื้อ — ถ้าสถานะที่คำนวณใหม่ตรงกับที่เก็บไว้อยู่แล้วจะไม่เขียนซ้ำ
+// คืนค่าสถานะที่ถูกต้อง (เผื่อ caller อยากอัปเดตหน้าจอทันทีโดยไม่ต้องโหลดใหม่) หรือ null ถ้าไม่มีอะไรต้องแก้
+export async function resyncOrderStatus(orderId, items, currentStatus) {
+  if (currentStatus === "completed" || currentStatus === "cancelled") return null;
+  if (!items || items.length === 0) return null;
+  const status = computeOrderStatus(items);
+  if (status === currentStatus) return null;
+  await updateDoc(doc(db,"purchaseOrders",orderId), { status, updatedAt: serverTimestamp() });
+  return status;
 }
 
 export async function getDeliveries(orderId) {
