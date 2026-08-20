@@ -36,44 +36,105 @@ function findFirst(text, patterns) {
 }
 
 function parseKOSINText(rawText) {
-  // รวมช่องว่างซ้ำให้เป็นบรรทัดเดียว แต่เก็บบรรทัดไว้สำหรับ item parsing
   const t = rawText.replace(/[ \t]+/g, " ");
 
-  const orderNumber    = findFirst(t, [/\b(PL[\d\-\/]+)/i,  /ใบสั่งซื้อ[เลขที่\s:]*([\w\-\/]+)/]);
-  const contractNumber = findFirst(t, [/\b(6[89][\-\d]+)/,  /สัญญา(?:เลขที่)?[\s:]*([\w\-]+)/]);
-  const quoteNumber    = findFirst(t, [/\b(A0[\d\-]+)/i,    /ใบเสนอราคา[\s:]*([\w\-]+)/]);
+  // เลขที่ใบสั่งซื้อ/สัญญา — format รพXXXX.XXX-XXXX-XX ใน KOSIN PDF
+  const orderNumber = findFirst(t, [
+    /(รพ[\d\.]+[\d\-]+)/,
+    /UNIT\s+No\.?\s+([\d\-]+)/i,
+  ]);
+
+  // เลขที่เสนอราคา — format เช่น A1928R2-69
+  const quoteNumber = findFirst(t, [
+    /เสนอราคา\s+([A-Z][\w\-]+)/,
+    /([A-Z]\d{2,}[A-Z][\d\-]+)/,
+  ]);
+
+  // โรงพยาบาล — ดึง รพ.xxxx prefix
   const hospital = findFirst(t, [
-    /ส่งถึง[\s:]+([^\n,]+)/,
-    /โรงพยาบาล([^\n,\d]{3,40})/,
-    /ผู้ซื้อ[\s:]*([^\n]+)/,
-  ]).replace(/^โรงพยาบาล/, "").trim();
+    /(รพ\.[ก-๙\w]+)/,
+    /โรงพยาบาล\s+([^\s\/,\n]+)/,
+  ]);
 
-  const department    = findFirst(t, [/แผนก[\s:]*([\w\sก-๙]+)/,     /Department[\s:]*([^\n]+)/i]);
-  const contactPerson = findFirst(t, [/ผู้ติดต่อ[\s:]*([^\n,]+)/,   /Contact[\s:]*([^\n]+)/i]);
-  const ownerName     = findFirst(t, [/ผู้ขาย[\s:]*([^\n,]+)/,      /ผู้จำหน่าย[\s:]*([^\n,]+)/]);
-  const orderTitle    = findFirst(t, [/เรื่อง[\s:]*([^\n]+)/,        /Subject[\s:]*([^\n]+)/i]);
-  const notes         = findFirst(t, [/หมายเหตุ[\s:]*([^\n]+)/,     /Note[s]?[\s:]*([^\n]+)/i]);
-  const orderDate     = parseThaiDate(findFirst(t, [/วันที่[\s:]*([\d\/\-]+)/,          /Date[\s:]*([\d\/\-]+)/i]));
-  const dueDate       = parseThaiDate(findFirst(t, [/กำหนดส่ง(?:ของ)?[\s:]*([\d\/\-]+)/, /ส่งมอบ[\s:]*([\d\/\-]+)/, /Due[\s:]*([\d\/\-]+)/i]));
+  // แผนก — ตามหลัง "แผนก"
+  const department = findFirst(t, [
+    /แผนก\s+([ก-๙a-zA-Z]+)/,
+    /Department\s*:?\s*([^\n,]+)/i,
+  ]);
 
-  // แยก item จาก pattern: รหัส  รายละเอียด  จำนวน  ราคา/หน่วย  รวม
+  // ผู้ติดต่อ — รองรับ "ติดต่อ" และ "ติดตอ" (ตัวอักษรหาย)
+  const contactPerson = findFirst(t, [
+    /ติดต.{0,2}\s+([^\n]+?)(?=\s+ก.{0,3}หนด|\n|$)/,
+    /Contact\s*:?\s*([^\n,]+)/i,
+  ]);
+
+  // วันที่ออกใบสั่ง — ใช้ label "Date" ภาษาอังกฤษ
+  const orderDate = parseThaiDate(findFirst(t, [
+    /\bDate\s+([\d\/]+)/i,
+    /วันท.{0,3}\s+([\d\/\-]+)/,
+  ]));
+
+  // กำหนดส่งของ — ISO date 2027-02-14 น่าเชื่อถือที่สุด
+  const rawDue = findFirst(t, [
+    /(\d{4}-\d{2}-\d{2})/,
+    /ก.{0,3}หนดส.{0,3}ของ\s+([\d\/\-]+)/,
+    /Due\s*:?\s*([\d\/\-]+)/i,
+  ]);
+  const dueDate = rawDue.match(/^\d{4}-\d{2}-\d{2}$/) ? rawDue : parseThaiDate(rawDue);
+
+  // ชื่อเรื่องใบสั่ง
+  const orderTitle = findFirst(t, [
+    /ใบส.{0,3}ง\s+([^\n]+)/,
+    /Subject\s*:?\s*([^\n]+)/i,
+  ]);
+
+  // หมายเหตุ
+  const notes = findFirst(t, [
+    /หมายเหต.{0,2}\s+([^\n]+)/,
+    /Note[s]?\s*:?\s*([^\n]+)/i,
+  ]);
+
+  // ผู้ขาย / ผู้รับผิดชอบ — ระหว่าง "ลงชื่อ" และ "ผู้ขาย"
+  const ownerName = findFirst(t, [
+    /ลงช.{0,3}อ\s+(.+?)\s+ผ.{0,2}ขาย/,
+    /ผ.{0,2}ขาย\s*:?\s*([^\n,]+)/,
+  ]);
+
+  // รายการสินค้า — format KOSIN: ลำดับ จำนวน รหัส รายละเอียด ราคา/หน่วย รวม
+  // เช่น: 1 2 UH801 Bipolar High Frequency Cord, 400 cm 14,000.00 28,000.00
   const items = [];
-  const lineRe = /([A-Z0-9][A-Z0-9\-\/\.]{2,})\s+(.{5,80}?)\s+(\d+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)/g;
-  let m;
-  while ((m = lineRe.exec(t)) !== null) {
-    const qty   = parseFloat(m[3]);
-    const unit  = parseFloat(m[4].replace(/,/g, ""));
-    const total = parseFloat(m[5].replace(/,/g, ""));
+  const lineRe = /\b([1-9]\d?)\s+(\d+(?:\.\d+)?)\s+([A-Z][A-Z0-9\-\/\.]+)\s+(.+?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/g;
+  let mi;
+  while ((mi = lineRe.exec(t)) !== null) {
+    const qty   = parseFloat(mi[2]);
+    const unit  = parseFloat(mi[5].replace(/,/g, ""));
+    const total = parseFloat(mi[6].replace(/,/g, ""));
     if (qty > 0 && unit > 0 && unit < 99_000_000) {
-      items.push({ productCode: m[1], description: m[2].trim(), quantity: qty, unitPrice: unit, totalPrice: total });
+      items.push({
+        productCode: mi[3],
+        description: mi[4].trim(),
+        quantity:    qty,
+        unitPrice:   unit,
+        totalPrice:  total,
+      });
     }
   }
 
   return {
-    orderNumber, contractNumber, quoteNumber,
-    orderDate, dueDate, hospital, department,
-    contactPerson, orderTitle, notes, ownerName,
-    items: items.length > 0 ? items : [{ productCode: "", description: "", quantity: 0, unitPrice: 0, totalPrice: 0 }],
+    orderNumber,
+    contractNumber: orderNumber,
+    quoteNumber,
+    orderDate,
+    dueDate,
+    hospital,
+    department,
+    contactPerson,
+    orderTitle,
+    notes,
+    ownerName,
+    items: items.length > 0
+      ? items
+      : [{ productCode: "", description: "", quantity: 0, unitPrice: 0, totalPrice: 0 }],
   };
 }
 
@@ -85,13 +146,31 @@ async function extractPDFText(b64) {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
   const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
-  let text = "";
+  let fullText = "";
+
   for (let p = 1; p <= pdf.numPages; p++) {
     const page    = await pdf.getPage(p);
     const content = await page.getTextContent();
-    text += content.items.map(i => i.str).join(" ") + "\n";
+
+    // จัดกลุ่ม text items ตาม y-coordinate เพื่อรักษาโครงสร้างบรรทัด
+    const byY = {};
+    for (const item of content.items) {
+      if (!item.str?.trim()) continue;
+      const y = item.transform ? Math.round(item.transform[5]) : 0;
+      if (!byY[y]) byY[y] = [];
+      byY[y].push({ x: item.transform?.[4] ?? 0, str: item.str });
+    }
+
+    // เรียงจากบนลงล่าง (y สูง = บน ใน PDF coordinate) แล้วซ้ายไปขวา
+    const lines = Object.entries(byY)
+      .sort(([a], [b]) => Number(b) - Number(a))
+      .map(([, lineItems]) =>
+        lineItems.sort((a, b) => a.x - b.x).map(i => i.str).join(" ")
+      );
+
+    fullText += lines.join("\n") + "\n";
   }
-  return text;
+  return fullText;
 }
 
 // ---- empty form template ---------------------------------------------------
