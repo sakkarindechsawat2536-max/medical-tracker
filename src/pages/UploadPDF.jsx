@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import * as pdfjsLib from "pdfjs-dist";
 import { createOrder } from "../lib/firestore";
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
 
 // ใช้ worker จาก CDN ตรงกับ version ที่ติดตั้ง (ฟรี ไม่ต้องการ API key)
 pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -37,40 +38,69 @@ function findFirst(text, patterns) {
 
 function parseKOSINText(rawText) {
   const t = rawText.replace(/[ \t]+/g, " ");
+  const lines = t.split("\n").map(l => l.trim()).filter(Boolean);
+  const findLineIdx = (re) => lines.findIndex(l => re.test(l));
 
   // ---- ใน KOSIN PDF: ค่าข้อมูลอยู่ "บรรทัดเหนือ" label (value-above-label form) ----
+  // เลย์เอาต์ของ PDF แต่ละใบไม่เหมือนกันเป๊ะ (บาง PDF ค่า 2 ช่องอยู่บรรทัดเดียวกัน
+  // บาง PDF ค่าลอยคนละบรรทัด) จึงต้องอ่านทีละบรรทัดรอบๆ label แทนการเดา pattern เดียว
 
-  // เลขที่สัญญา — "รพ 0033.201-1668-69" (มีช่องว่างหลัง รพ)
-  const orderNumberRaw = findFirst(t, [
-    /(รพ\s+[\d\.]+[\d\-]+)/,   // มีช่องว่าง: รพ 0033.201-1668-69
-    /(รพ[\d\.]+[\d\-]+)/,       // ไม่มีช่องว่าง: รพ0033.201-1668-69
-    /UNIT\s+No\.?\s+([\d\-]+)/i,
-  ]);
-  const orderNumber = orderNumberRaw.replace(/\s+/g, ""); // ลบช่องว่าง → รพ0033.201-1668-69
+  // ---- เลขที่สัญญา/สั่งซื้อ + เลขที่เสนอราคา ----
+  // อยู่เหนือบรรทัด "เลขที่สัญญา / สั่งซื้อ / สั่งจาง เลขที่เสนอราคา"
+  let orderNumber = "", quoteNumber = "";
+  const contractLabelIdx = findLineIdx(/เลขท.{0,3}ส.{0,2}ญญา/);
+  if (contractLabelIdx > 0) {
+    let valueLine = lines[contractLabelIdx - 1] || "";
+    valueLine = valueLine.replace(/^(รพ)\s+(?=[\d.])/, "$1"); // "รพ 0033..." → "รพ0033..."
+    const tokens = valueLine.split(" ").filter(Boolean);
+    if (tokens.length >= 2) {
+      orderNumber = tokens[0];
+      quoteNumber = tokens[1];
+    } else if (tokens.length === 1) {
+      orderNumber = tokens[0];
+      const above = lines[contractLabelIdx - 2] || "";
+      if (/^[A-Z]\d{2,}[A-Z][\d\-]+$/.test(above)) quoteNumber = above; // เลขเสนอราคาลอยขึ้นไปอีกบรรทัด
+    }
+  }
+  // fallback ด้วย regex กว้างๆ ถ้าหาจากบรรทัดไม่เจอ (รองรับทั้ง PO-xxx และ รพ-xxx)
+  if (!orderNumber) orderNumber = findFirst(t, [/\b(PO[\w\-]+)/i, /(รพ[\d\.]+[\d\-]+)/, /UNIT\s+No\.?\s+([\d\-]+)/i]);
+  if (!quoteNumber) quoteNumber = findFirst(t, [/([A-Z]\d{2,}[A-Z][\d\-]+)/]);
+  orderNumber = orderNumber.replace(/\s+/g, "");
 
-  // เลขที่เสนอราคา — "A1928R2-69" (ตัวอักษร+ตัวเลข+ตัวอักษร+ตัวเลข-ปี)
-  const quoteNumber = findFirst(t, [
-    /([A-Z]\d{2,}[A-Z][\d\-]+)/,   // A1928R2-69
-    /เสนอราคา\s+([A-Z][\w\-]+)/,
-  ]);
+  // ---- โรงพยาบาล + แผนกที่ส่ง ----
+  // อยู่เหนือบรรทัด "ชื่อโรงพยาบาล / บริษัท ... แผนก ..." — ตำแหน่งสัมพัทธ์ของ 2 ค่านี้ไม่คงที่
+  // บาง PDF ทั้งสองอยู่บรรทัดเดียวกัน ("รพ . วัฒนแพทยอาวนาง OR"), บาง PDF โรงพยาบาลอยู่ไกลกว่าแผนก
+  // ("รพ . ระนอง" แล้วค่อย "พัสดุ" ในบรรทัดถัดมา) จึงต้องสแกนหน้าต่างหลายบรรทัดแทนตำแหน่งตายตัว
+  let hospital = "", department = "";
+  const hospLabelIdx = findLineIdx(/โรงพยาบาล/);
+  if (hospLabelIdx > 0) {
+    const WIN = 3;
+    const winStart = Math.max(0, hospLabelIdx - WIN);
+    const win = lines.slice(winStart, hospLabelIdx); // บรรทัดก่อน label เรียงบนลงล่าง
+    let hospLineIdx = -1, hMatch = null;
+    for (let i = 0; i < win.length; i++) {
+      const m = win[i].match(/รพ\s*\.\s*[ก-๙]+/);
+      if (m) { hospLineIdx = i; hMatch = m; break; }
+    }
+    if (hospLineIdx >= 0) {
+      hospital = hMatch[0].replace(/\s*\.\s*/, ".");
+      const remainder = win[hospLineIdx].slice(hMatch.index + hMatch[0].length).trim();
+      if (remainder) department = remainder;
+      else if (hospLineIdx !== win.length - 1) department = win[win.length - 1];
+    } else if (win.length > 0) {
+      hospital = win[win.length - 1];
+    }
+  }
 
-  // โรงพยาบาล — "รพ . ระนอง" (มีช่องว่างรอบจุด) → ทำความสะอาดเป็น "รพ.ระนอง"
-  const hospitalRaw = findFirst(t, [
-    /(รพ\s*\.\s*[ก-๙\w]+)/,   // รพ . ระนอง หรือ รพ.ระนอง
-  ]);
-  const hospital = hospitalRaw.replace(/\s*\.\s*/, ".");  // → รพ.ระนอง
-
-  // แผนก — บรรทัดก่อน label "ชื่อโรงพยาบาล" (ค่าอยู่เหนือ label)
-  const department = findFirst(t, [
-    /([^\n]+)\n[^\n]*โรงพยาบาล/,   // บรรทัดก่อน label โรงพยาบาล = พัสดุ
-    /แผนก\s+([ก-๙a-zA-Z]+)/,
-  ]);
-
-  // ผู้ติดต่อ — บรรทัดก่อน label "ชื่อบุคคล" (ค่าอยู่เหนือ label)
-  const contactPerson = findFirst(t, [
-    /([^\n]+)\n[^\n]*(?:ชื่อบุคคล|บุคคลที่)/,   // บรรทัดก่อน label = พี่เก
-    /ติดต.{0,2}\s+([^\n,]+)/,
-  ]);
+  // ---- ผู้ติดต่อ ----
+  // อยู่เหนือบรรทัด "ชื่อบุคคลที่ติดต่อ กำหนดส่งของ วันที่ออกบิล"
+  // เพิกเฉยข้อความ template คงที่ "ป - เดือน - วัน" (คำใบ้รูปแบบวันที่ ไม่ใช่ชื่อคน)
+  let contactPerson = "";
+  const contactLabelIdx = findLineIdx(/บ.{0,2}คคลท.{0,2}ต.{0,2}ดต/);
+  if (contactLabelIdx > 0) {
+    const cLine = (lines[contactLabelIdx - 1] || "").trim();
+    if (cLine && !/เด.อน/.test(cLine)) contactPerson = cLine;
+  }
 
   // วันที่ออกใบสั่ง — "18/8/2026" อยู่ก่อน label "Date" (value-above-label)
   const orderDate = parseThaiDate(findFirst(t, [
@@ -103,22 +133,41 @@ function parseKOSINText(rawText) {
     /ลงช.{0,3}อ\s+([ก-๙][ก-๙\s()\-]+)/,                      // ชื่อ Thai เท่านั้น
   ]);
 
-  // รายการสินค้า — format KOSIN: ลำดับ จำนวน รหัส รายละเอียด ราคา/หน่วย รวม
-  // เช่น: 1 2 UH801 Bipolar High Frequency Cord, 400 cm 14,000.00 28,000.00
+  // ---- รายการสินค้า ----
+  // format KOSIN: [ลำดับ] จำนวน รหัสสินค้า รายละเอียด ราคา(หน่วยละ) [ราคารวม]
+  // ลำดับ (seq) อาจหายไปเมื่อรายการมีมากกว่า 1 บรรทัด และบางแถวมีราคาแค่ตัวเดียว (เมื่อจำนวน=1 หน่วยละ=รวม)
+  // จำกัดขอบเขตค้นหาแค่ในตารางรายการสินค้า (ระหว่าง header "ลําดับ" กับ footer "ผูแทน...")
+  // เพื่อไม่ให้ไปจับตัวเลขในส่วนสรุปราคา/ส่วนลดที่อยู่ถัดไปโดยผิดพลาด
   const items = [];
-  const lineRe = /\b([1-9]\d?)\s+(\d+(?:\.\d+)?)\s+([A-Z][A-Z0-9\-\/\.]+)\s+(.+?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/g;
-  let mi;
-  while ((mi = lineRe.exec(t)) !== null) {
-    const qty   = parseFloat(mi[2]);
-    const unit  = parseFloat(mi[5].replace(/,/g, ""));
-    const total = parseFloat(mi[6].replace(/,/g, ""));
-    if (qty > 0 && unit > 0 && unit < 99_000_000) {
+  const headerIdx = findLineIdx(/ลําดับ|ลำดับ/);
+  let footerIdx = -1;
+  if (headerIdx >= 0) {
+    for (let i = headerIdx + 1; i < lines.length; i++) {
+      if (/ผ.{0,2}แทน/.test(lines[i])) { footerIdx = i; break; }
+    }
+  }
+  const scanLines = headerIdx >= 0
+    ? lines.slice(headerIdx + 1, footerIdx >= 0 ? footerIdx : lines.length)
+    : lines;
+
+  const itemLineRe = /^(?:(\d{1,2})\s+)?(\d+(?:\.\d+)?)\s+([A-Za-z0-9][A-Za-z0-9\-\/\.]{2,})\s+(.+?)\s+([\d,]+\.\d{2})(?:\s+([\d,]+\.\d{2}))?$/;
+
+  for (const line of scanLines) {
+    const m = line.match(itemLineRe);
+    if (!m) continue;
+    const qty    = parseFloat(m[2]);
+    const price1 = parseFloat(m[5].replace(/,/g, ""));
+    const price2 = m[6] ? parseFloat(m[6].replace(/,/g, "")) : null;
+    let unitPrice, totalPrice;
+    if (price2 !== null) { unitPrice = price1; totalPrice = price2; }
+    else { totalPrice = price1; unitPrice = qty > 0 ? +(price1 / qty).toFixed(2) : price1; }
+    if (qty > 0 && totalPrice > 0 && totalPrice < 99_000_000) {
       items.push({
-        productCode: mi[3],
-        description: mi[4].trim(),
+        productCode: m[3],
+        description: m[4].trim(),
         quantity:    qty,
-        unitPrice:   unit,
-        totalPrice:  total,
+        unitPrice,
+        totalPrice,
       });
     }
   }
@@ -215,6 +264,7 @@ function Field({ label, value, onChange, type = "text", required }) {
 
 export default function UploadPDF() {
   const { user }   = useAuth();
+  const toast      = useToast();
   const navigate   = useNavigate();
   const [stage, setStage]       = useState("upload");
   const [form,  setForm]        = useState(null);
@@ -232,6 +282,7 @@ export default function UploadPDF() {
   async function handleFile(file) {
     if (!file || file.type !== "application/pdf") { setError("กรุณาเลือกไฟล์ PDF เท่านั้น"); return; }
     setError(""); setPdfNote(""); setRawText(""); setStage("parsing");
+    const toastId = toast.loading("กำลังอ่านข้อมูลจาก PDF...");
     try {
       const b64 = await new Promise((res, rej) => {
         const r = new FileReader();
@@ -250,14 +301,18 @@ export default function UploadPDF() {
       const filled = [parsed.orderNumber, parsed.hospital, parsed.dueDate].filter(Boolean).length;
       if (filled === 0) {
         setPdfNote("⚠ ดึงข้อมูลอัตโนมัติไม่ได้ — กรุณากรอกข้อมูลเอง (ดูข้อความจาก PDF ด้านล่าง)");
+        toast.error("ดึงข้อมูลจาก PDF อัตโนมัติไม่ได้ — กรุณากรอกข้อมูลเอง", { id: toastId });
       } else if (filled < 3) {
         setPdfNote("ℹ ดึงข้อมูลได้บางส่วน — ตรวจสอบและเติมข้อมูลที่ขาดหายด้านล่าง");
+        toast.info("ดึงข้อมูลได้บางส่วน — ตรวจสอบและเติมข้อมูลที่ขาดหายด้านล่าง", { id: toastId });
       } else {
         setPdfNote("✅ ดึงข้อมูลสำเร็จ — ตรวจสอบก่อนบันทึก");
+        toast.success("อ่าน PDF สำเร็จ — ตรวจสอบข้อมูลก่อนบันทึก", { id: toastId });
       }
       setStage("review");
     } catch (e) {
       setPdfNote("⚠ อ่าน PDF ไม่สำเร็จ: " + e.message + " — กรอกข้อมูลเองแทน");
+      toast.error("อ่าน PDF ไม่สำเร็จ: " + e.message, { id: toastId });
       setForm(emptyForm());
       setStage("review");
     }
@@ -270,8 +325,16 @@ export default function UploadPDF() {
 
   async function handleSave() {
     setStage("saving");
-    try { await createOrder(form, user.uid); setStage("done"); }
-    catch (e) { setError("บันทึกไม่สำเร็จ: " + e.message); setStage("review"); }
+    const toastId = toast.loading("กำลังบันทึกใบสั่งซื้อ...");
+    try {
+      await createOrder(form, user.uid);
+      setStage("done");
+      toast.success("บันทึกใบสั่งซื้อสำเร็จ", { id: toastId });
+    } catch (e) {
+      setError("บันทึกไม่สำเร็จ: " + e.message);
+      toast.error("บันทึกไม่สำเร็จ: " + e.message, { id: toastId });
+      setStage("review");
+    }
   }
 
   // ---- upload / parsing stage ----
@@ -281,9 +344,12 @@ export default function UploadPDF() {
       <p className="text-sm text-slate-400 mb-6">ระบบอ่านข้อมูลอัตโนมัติ แล้วให้คุณตรวจสอบก่อนบันทึก</p>
       {stage === "parsing"
         ? (
-          <div className="bg-white rounded-xl border border-slate-200 p-16 text-center max-w-lg">
+          <div className="bg-white rounded-xl border border-slate-200 p-8 sm:p-16 text-center max-w-lg">
             <div className="text-4xl mb-4 animate-pulse">📄</div>
-            <div className="font-bold text-slate-700">กำลังอ่านข้อมูลจาก PDF...</div>
+            <div className="font-bold text-slate-700 flex items-center justify-center gap-2">
+              <span className="w-4 h-4 rounded-full border-2 border-slate-200 border-t-blue-600 animate-spin" />
+              กำลังอ่านข้อมูลจาก PDF...
+            </div>
             <div className="text-sm text-slate-400 mt-2">ประมวลผลบนเครื่อง — ไม่ส่งข้อมูลออกอินเทอร์เน็ต</div>
           </div>
         ) : (
@@ -293,7 +359,7 @@ export default function UploadPDF() {
               onDragLeave={() => setDrag(false)}
               onDrop={e => { e.preventDefault(); setDrag(false); handleFile(e.dataTransfer.files[0]); }}
               onClick={() => document.getElementById("pdf-in").click()}
-              className={`border-2 border-dashed rounded-2xl p-16 text-center cursor-pointer transition
+              className={`border-2 border-dashed rounded-2xl p-8 sm:p-16 text-center cursor-pointer transition
                 ${drag ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-slate-50 hover:border-slate-400"}`}
             >
               <div className="text-4xl mb-3">📄</div>
@@ -367,7 +433,7 @@ export default function UploadPDF() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4 mb-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <div className="text-xs font-bold text-slate-400 tracking-wider mb-4">ข้อมูลหลัก</div>
           <div className="grid gap-3">
@@ -390,7 +456,8 @@ export default function UploadPDF() {
 
       <div className="bg-white rounded-xl border border-slate-200 mb-4 overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 font-bold text-slate-800">รายการสินค้า</div>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[560px]">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">
               {["รหัสสินค้า","รายละเอียด","จำนวน","หน่วยละ (฿)","รวม (฿)"].map(h => (
@@ -419,6 +486,7 @@ export default function UploadPDF() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {form?.notes && (
@@ -427,13 +495,14 @@ export default function UploadPDF() {
         </div>
       )}
       {error && <div className="text-red-500 text-sm mb-3">{error}</div>}
-      <div className="flex gap-3 justify-end">
+      <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
         <button onClick={() => { setStage("upload"); setPdfNote(""); }}
           className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-semibold cursor-pointer">
           ← เลือกไฟล์ใหม่
         </button>
         <button onClick={handleSave} disabled={stage === "saving"}
-          className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-semibold cursor-pointer disabled:opacity-50">
+          className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-semibold cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2">
+          {stage === "saving" && <span className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />}
           {stage === "saving" ? "กำลังบันทึก..." : "บันทึกใบสั่งซื้อ →"}
         </button>
       </div>

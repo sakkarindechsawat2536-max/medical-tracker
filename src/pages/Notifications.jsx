@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
 import { getNotifHistory } from "../lib/firestore";
 
 const fmt = d => d ? new Date(d?.toDate?d.toDate():d).toLocaleDateString("th-TH",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "—";
@@ -40,6 +41,7 @@ const SCHEDULE_OPTIONS = [
 
 export default function Notifications() {
   const { user, profile } = useAuth();
+  const toast = useToast();
   const [lineToken,   setLineToken]   = useState(profile?.lineToken || "");
   const [emailOn,     setEmailOn]     = useState(profile?.emailNotify ?? true);
   const [lineOn,      setLineOn]      = useState(profile?.lineNotify ?? false);
@@ -52,7 +54,9 @@ export default function Notifications() {
   const [testDone,    setTestDone]    = useState(null);
 
   useEffect(()=>{
-    if (user) getNotifHistory(user.uid).then(setHistory);
+    if (user) getNotifHistory(user.uid)
+      .then(setHistory)
+      .catch(e=>{ console.error(e); toast.error(`โหลดประวัติการแจ้งเตือนไม่สำเร็จ: ${e?.message||e}`); });
   },[user]);
 
   function toggleSchedule(v) {
@@ -61,21 +65,32 @@ export default function Notifications() {
 
   async function handleSave() {
     setSaving(true);
+    const toastId = toast.loading("กำลังบันทึกการตั้งค่า...");
     try {
       await updateDoc(doc(db,"users",user.uid), {
         lineToken, emailNotify:emailOn, lineNotify:lineOn,
         notifySchedule:schedule, notifyTime,
       });
       setSaved(true); setTimeout(()=>setSaved(false),2000);
+      toast.success("บันทึกการตั้งค่าสำเร็จ", { id: toastId });
+    } catch (e) {
+      toast.error(`บันทึกไม่สำเร็จ: ${e?.message || e}`, { id: toastId });
     } finally { setSaving(false); }
   }
 
   async function handleTest(channel) {
     setTestSending(channel);
-    // จำลองการส่ง — จริงๆ จะเรียก GitHub Actions / Cloud Function
-    await new Promise(r=>setTimeout(r,1500));
-    setTestSending(null); setTestDone(channel);
-    setTimeout(()=>setTestDone(null),3000);
+    const label = channel === "line" ? "LINE" : "Email";
+    const toastId = toast.loading(`กำลังส่งทดสอบ ${label}...`);
+    try {
+      // จำลองการส่ง — จริงๆ จะเรียก GitHub Actions / Cloud Function
+      await new Promise(r=>setTimeout(r,1500));
+      setTestDone(channel);
+      toast.success(`ส่งทดสอบ ${label} สำเร็จ`, { id: toastId });
+      setTimeout(()=>setTestDone(null),3000);
+    } catch (e) {
+      toast.error(`ส่งทดสอบ ${label} ไม่สำเร็จ: ${e?.message || e}`, { id: toastId });
+    } finally { setTestSending(null); }
   }
 
   return (
@@ -83,7 +98,7 @@ export default function Notifications() {
       <h1 className="text-2xl font-extrabold text-slate-800 mb-1">การแจ้งเตือน</h1>
       <p className="text-sm text-slate-400 mb-6">ตั้งค่าช่องทางและเวลาแจ้งเตือนกำหนดส่งของคุณ</p>
 
-      <div className="grid grid-cols-2 gap-5 mb-5">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
 
         {/* LINE Notify */}
         <div className="bg-white rounded-xl border border-slate-200 p-5">
@@ -168,7 +183,7 @@ export default function Notifications() {
       {/* Schedule settings */}
       <div className="bg-white rounded-xl border border-slate-200 p-5 mb-5">
         <div className="font-bold text-slate-800 mb-4">⏰ กำหนดเวลาและรอบแจ้งเตือน</div>
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
           <div>
             <div className="text-xs font-bold text-slate-500 mb-3">แจ้งเตือนเมื่อเหลือ:</div>
             <div className="grid gap-2">
@@ -212,7 +227,8 @@ export default function Notifications() {
         </div>
         {history.length===0
           ? <div className="px-5 py-8 text-center text-slate-400 text-sm">ยังไม่มีประวัติการแจ้งเตือน</div>
-          : <table className="w-full text-sm">
+          : <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[480px]">
               <thead><tr className="bg-slate-50 border-b border-slate-200">
                 {["วันเวลา","ช่องทาง","ใบสั่งซื้อ","ประเภท"].map(h=>(
                   <th key={h} className="text-left px-4 py-3 text-xs font-bold text-slate-400">{h}</th>
@@ -227,6 +243,7 @@ export default function Notifications() {
                 </tr>
               ))}</tbody>
             </table>
+            </div>
         }
       </div>
     </div>

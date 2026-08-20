@@ -1,18 +1,24 @@
 import { useState, useEffect } from "react";
 import { getAllDeliveries } from "../lib/firestore";
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
 
 const fmt = d => d ? new Date(d?.toDate?d.toDate():d).toLocaleDateString("th-TH",{day:"numeric",month:"short",year:"numeric"}) : "—";
 
 export default function History() {
   const { user, profile } = useAuth();
+  const toast = useToast();
   const [records,  setRecords]  = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [q, setQ] = useState("");
 
   useEffect(()=>{
     if (!user) return;
-    getAllDeliveries(user.uid, profile?.role).then(d=>{setRecords(d);setLoading(false);});
+    setLoading(true);
+    getAllDeliveries(user.uid, profile?.role)
+      .then(d=>setRecords(d))
+      .catch(e=>{ console.error(e); toast.error(`โหลดประวัติไม่สำเร็จ: ${e?.message||e}`); })
+      .finally(()=>setLoading(false));
   },[user]);
 
   const filtered = records.filter(r=> !q || r.orderId?.includes(q) || r.receiverName?.toLowerCase().includes(q));
@@ -23,12 +29,15 @@ export default function History() {
       <p className="text-sm text-slate-400 mb-5">{records.length} รายการทั้งหมด</p>
       <div className="mb-4">
         <input value={q} onChange={e=>setQ(e.target.value.toLowerCase())} placeholder="ค้นหาเลขที่ใบสั่งซื้อ หรือผู้รับสินค้า..."
-          className="border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none w-80"/>
+          className="border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none w-full sm:w-80"/>
       </div>
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        {loading ? <div className="p-8 text-center text-slate-400">กำลังโหลด...</div>
+        {loading ? <div className="p-8 text-center text-slate-400 flex items-center justify-center gap-2">
+            <span className="w-4 h-4 rounded-full border-2 border-slate-200 border-t-blue-600 animate-spin" />กำลังโหลด...
+          </div>
         : filtered.length===0 ? <div className="p-8 text-center text-slate-400">ไม่พบรายการ</div>
-        : <table className="w-full text-sm">
+        : <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[720px]">
             <thead><tr className="bg-slate-50 border-b-2 border-slate-200">
               {["วันที่ส่ง","เลขที่ใบสั่งซื้อ","จำนวน","ผู้รับสินค้า","เลขที่ใบส่งของ","หมายเลขพัสดุ","หมายเหตุ"].map(h=>(
                 <th key={h} className="text-left px-4 py-3 text-xs font-bold text-slate-400">{h}</th>
@@ -46,6 +55,7 @@ export default function History() {
               </tr>
             ))}</tbody>
           </table>
+          </div>
         }
       </div>
     </div>

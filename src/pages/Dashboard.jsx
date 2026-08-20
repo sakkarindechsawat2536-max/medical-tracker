@@ -8,7 +8,7 @@ const fmt = d => d ? new Date(d?.toDate?d.toDate():d).toLocaleDateString("th-TH"
 
 export default function Dashboard() {
   const { profile } = useAuth();
-  const { orders, loading } = useOrders();
+  const { orders, loading, error, refresh } = useOrders();
 
   const stats = useMemo(() => ({
     overdue:   orders.filter(o=>o.status==="overdue").length,
@@ -32,7 +32,18 @@ export default function Dashboard() {
     {label:"ส่งครบแล้ว",   value:stats.completed, color:"#0D9488"},
   ];
 
-  if (loading) return <div className="text-slate-400">กำลังโหลด...</div>;
+  if (loading) return (
+    <div className="flex items-center gap-2 text-slate-400">
+      <span className="w-4 h-4 rounded-full border-2 border-slate-200 border-t-blue-600 animate-spin" />กำลังโหลด...
+    </div>
+  );
+  if (error) return (
+    <div className="max-w-md">
+      <div className="text-red-500 font-semibold mb-2">⚠ โหลดข้อมูลไม่สำเร็จ</div>
+      <div className="text-sm text-slate-500 mb-4 break-words">{error}</div>
+      <button onClick={refresh} className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-semibold cursor-pointer">ลองใหม่</button>
+    </div>
+  );
 
   return (
     <div>
@@ -40,10 +51,10 @@ export default function Dashboard() {
         <h1 className="text-2xl font-extrabold text-slate-800">Dashboard</h1>
         <p className="text-sm text-slate-400 mt-1">สวัสดี {profile?.displayName?.split(" ")[0]} — สรุปงานของคุณวันนี้</p>
       </div>
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-6">
         {STATS.map(s=>(
-          <div key={s.label} className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
-            <div className="text-3xl font-black leading-none" style={{color:s.color}}>{s.value}</div>
+          <div key={s.label} className="bg-white rounded-xl p-4 sm:p-5 border border-slate-200 shadow-sm">
+            <div className="text-2xl sm:text-3xl font-black leading-none" style={{color:s.color}}>{s.value}</div>
             <div className="text-xs font-semibold text-slate-500 mt-2">{s.label}</div>
           </div>
         ))}
@@ -56,7 +67,8 @@ export default function Dashboard() {
         </div>
         {urgent.length===0
           ? <div className="px-5 py-8 text-center text-slate-400 text-sm">✅ ไม่มีรายการเร่งด่วน</div>
-          : <table className="w-full text-sm">
+          : <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[560px]">
               <thead><tr className="border-b border-slate-100">
                 {["เลขที่ใบสั่งซื้อ","โรงพยาบาล","กำหนดส่ง","สถานะ",""].map(h=>(
                   <th key={h} className="text-left px-5 py-3 text-xs font-bold text-slate-400">{h}</th>
@@ -72,6 +84,7 @@ export default function Dashboard() {
                 </tr>
               ))}</tbody>
             </table>
+            </div>
         }
       </div>
     </div>

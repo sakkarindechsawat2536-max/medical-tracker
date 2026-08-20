@@ -5,11 +5,13 @@ import { db } from "../lib/firebase";
 import { getOrderItems, recordDelivery, getDeliveries } from "../lib/firestore";
 import { StatusPill, DaysBadge } from "../components/StatusPill";
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
 
 const fmt = d => d ? new Date(d?.toDate?d.toDate():d).toLocaleDateString("th-TH",{day:"numeric",month:"short",year:"numeric"}) : "—";
 
 function DeliveryModal({ item, orderId, onClose, onSaved }) {
   const { user } = useAuth();
+  const toast = useToast();
   const [form, setForm] = useState({ quantity:1, deliveryDate:new Date().toISOString().split("T")[0], receiverName:"", deliveryNoteNumber:"", trackingNumber:"", notes:"" });
   const [saving, setSaving] = useState(false);
   const [done,   setDone]   = useState(false);
@@ -18,13 +20,20 @@ function DeliveryModal({ item, orderId, onClose, onSaved }) {
 
   async function save() {
     setSaving(true);
-    try { await recordDelivery(item.id, orderId, form, user.uid); setDone(true); setTimeout(()=>{onSaved();onClose();},1000); }
-    finally { setSaving(false); }
+    const toastId = toast.loading("กำลังบันทึกการส่งมอบ...");
+    try {
+      await recordDelivery(item.id, orderId, form, user.uid);
+      setDone(true);
+      toast.success("บันทึกการส่งมอบสำเร็จ", { id: toastId });
+      setTimeout(()=>{onSaved();onClose();},1000);
+    } catch (e) {
+      toast.error(`บันทึกไม่สำเร็จ: ${e?.message || e}`, { id: toastId });
+    } finally { setSaving(false); }
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl shadow-2xl w-[480px] max-h-[90vh] overflow-y-auto p-7">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[480px] max-h-[90vh] overflow-y-auto p-5 sm:p-7">
         {done ? <div className="py-10 text-center"><div className="text-5xl mb-3">✅</div><div className="font-bold text-teal-600 text-lg">บันทึกสำเร็จ</div></div> : <>
           <div className="flex justify-between items-start mb-5">
             <div><div className="font-extrabold text-slate-800 text-lg">บันทึกการส่งมอบ</div>
@@ -34,7 +43,7 @@ function DeliveryModal({ item, orderId, onClose, onSaved }) {
             <button onClick={onClose} className="text-slate-400 text-xl cursor-pointer">✕</button>
           </div>
           <div className="grid gap-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div><label className="text-xs font-semibold text-slate-500 block mb-1">จำนวนที่ส่ง *</label>
                 <input type="number" min={1} max={rem} value={form.quantity} onChange={e=>upd("quantity")(e.target.value)}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none"/></div>
@@ -65,22 +74,51 @@ function DeliveryModal({ item, orderId, onClose, onSaved }) {
 
 export default function OrderDetail() {
   const { id } = useParams();
+  const toast = useToast();
   const [order,     setOrder]     = useState(null);
   const [items,     setItems]     = useState([]);
   const [deliveries,setDeliveries]= useState([]);
   const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState("");
   const [modal,     setModal]     = useState(null);
 
   async function load() {
-    const [snap, itemsData, delData] = await Promise.all([
-      getDoc(doc(db,"purchaseOrders",id)), getOrderItems(id), getDeliveries(id),
-    ]);
-    if (snap.exists()) setOrder({id:snap.id,...snap.data()});
-    setItems(itemsData); setDeliveries(delData); setLoading(false);
+    setLoading(true); setError("");
+    try {
+      const [snap, itemsData, delData] = await Promise.all([
+        getDoc(doc(db,"purchaseOrders",id)), getOrderItems(id), getDeliveries(id),
+      ]);
+      if (snap.exists()) setOrder({id:snap.id,...snap.data()});
+      else setOrder(null);
+      setItems(itemsData); setDeliveries(delData);
+    } catch (e) {
+      console.error("โหลดข้อมูลใบสั่งซื้อล้มเหลว:", e);
+      setError(e?.message || "โหลดข้อมูลไม่สำเร็จ");
+      toast.error(`โหลดข้อมูลใบสั่งซื้อไม่สำเร็จ: ${e?.code || e?.message || e}`);
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(()=>{load();},[id]);
 
-  if (loading) return <div className="text-slate-400">กำลังโหลด...</div>;
+  if (loading) return (
+    <div className="flex items-center gap-3 text-slate-400">
+      <span className="w-4 h-4 rounded-full border-2 border-slate-200 border-t-blue-600 animate-spin" />
+      กำลังโหลด...
+    </div>
+  );
+
+  if (error) return (
+    <div className="max-w-md">
+      <div className="text-red-500 font-semibold mb-2">⚠ โหลดข้อมูลไม่สำเร็จ</div>
+      <div className="text-sm text-slate-500 mb-4 break-words">{error}</div>
+      <div className="flex gap-3">
+        <button onClick={load} className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-semibold cursor-pointer">ลองใหม่</button>
+        <Link to="/orders" className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-semibold">← กลับรายการ</Link>
+      </div>
+    </div>
+  );
+
   if (!order)  return <div className="text-red-500">ไม่พบข้อมูล</div>;
 
   const INFO = [["เลขที่สัญญา",order.contractNumber],["เลขที่เสนอราคา",order.quoteNumber],
@@ -90,38 +128,39 @@ export default function OrderDetail() {
   return (
     <div>
       <Link to="/orders" className="text-blue-600 text-sm font-semibold hover:underline">← กลับรายการ</Link>
-      <div className="flex justify-between items-start mt-4 mb-5">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3 mt-4 mb-5">
         <div>
-          <h1 className="text-2xl font-extrabold text-slate-800">{order.orderNumber}</h1>
+          <h1 className="text-2xl font-extrabold text-slate-800 break-words">{order.orderNumber}</h1>
           <div className="flex gap-2 mt-2 items-center flex-wrap">
             <StatusPill status={order.status}/><DaysBadge dueDate={order.dueDate} status={order.status}/>
           </div>
         </div>
         <button onClick={()=>setModal(items.find(i=>i.status!=="completed")||items[0])}
-          className="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-600 cursor-pointer">
+          className="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-600 cursor-pointer self-start">
           + บันทึกการส่งมอบ
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 mb-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <div className="text-xs font-bold text-slate-400 tracking-wider mb-3">ข้อมูลใบสั่งซื้อ</div>
           {INFO.map(([k,v])=>(
-            <div key={k} className="flex justify-between py-2 border-b border-slate-50 text-sm">
-              <span className="text-slate-400">{k}</span><span className="font-semibold text-slate-800">{v||"—"}</span>
+            <div key={k} className="flex justify-between gap-3 py-2 border-b border-slate-50 text-sm">
+              <span className="text-slate-400 flex-shrink-0">{k}</span><span className="font-semibold text-slate-800 text-right break-words">{v||"—"}</span>
             </div>
           ))}
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <div className="text-xs font-bold text-slate-400 tracking-wider mb-3">หมายเหตุ</div>
-          <p className="text-sm text-slate-700 leading-relaxed">{order.notes||"ไม่มีหมายเหตุ"}</p>
+          <p className="text-sm text-slate-700 leading-relaxed break-words">{order.notes||"ไม่มีหมายเหตุ"}</p>
           {order.notes && <div className="mt-3 bg-amber-50 text-amber-700 text-xs font-semibold rounded-lg px-3 py-2">⚠ สถานะส่งมอบต้องยืนยันโดยผู้รับผิดชอบเท่านั้น</div>}
         </div>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-5">
         <div className="px-5 py-4 border-b border-slate-100 font-bold text-slate-800">รายการสินค้า</div>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[640px]">
           <thead><tr className="bg-slate-50 border-b-2 border-slate-200">
             {["รหัสสินค้า","รายละเอียด","สั่ง","ส่งแล้ว","คงเหลือ","สถานะ",""].map(h=>(
               <th key={h} className="text-left px-4 py-3 text-xs font-bold text-slate-400">{h}</th>
@@ -139,12 +178,14 @@ export default function OrderDetail() {
             </tr>
           ))}</tbody>
         </table>
+        </div>
       </div>
 
       {deliveries.length>0 && (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-slate-100 font-bold text-slate-800">ประวัติการส่งมอบ</div>
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[640px]">
             <thead><tr className="bg-slate-50 border-b border-slate-200">
               {["วันที่ส่ง","จำนวน","ผู้รับ","เลขใบส่งของ","หมายเลขพัสดุ","หมายเหตุ"].map(h=>(
                 <th key={h} className="text-left px-4 py-3 text-xs font-bold text-slate-400">{h}</th>
@@ -161,6 +202,7 @@ export default function OrderDetail() {
               </tr>
             ))}</tbody>
           </table>
+          </div>
         </div>
       )}
 

@@ -7,7 +7,7 @@ const fmt = d => d ? new Date(d?.toDate?d.toDate():d).toLocaleDateString("th-TH"
 const FILTERS = [{v:"all",l:"ทั้งหมด"},{v:"overdue",l:"เกินกำหนด"},{v:"partial",l:"ส่งบางส่วน"},{v:"pending",l:"รอดำเนินการ"},{v:"completed",l:"ส่งครบแล้ว"}];
 
 export default function Orders() {
-  const { orders, loading } = useOrders();
+  const { orders, loading, error, refresh } = useOrders();
   const [q, setQ]   = useState("");
   const [fs, setFs] = useState("all");
 
@@ -18,12 +18,12 @@ export default function Orders() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-5">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-5">
         <div>
           <h1 className="text-2xl font-extrabold text-slate-800">ใบสั่งซื้อของฉัน</h1>
           <p className="text-sm text-slate-400 mt-1">{orders.length} รายการ</p>
         </div>
-        <Link to="/upload" className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-700 transition">+ เพิ่มจาก PDF</Link>
+        <Link to="/upload" className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-700 transition text-center">+ เพิ่มจาก PDF</Link>
       </div>
       <div className="flex gap-3 mb-4 flex-wrap">
         <input value={q} onChange={e=>setQ(e.target.value.toLowerCase())} placeholder="ค้นหาเลขที่ใบสั่งซื้อ หรือโรงพยาบาล..."
@@ -36,9 +36,17 @@ export default function Orders() {
         ))}
       </div>
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        {loading ? <div className="p-8 text-center text-slate-400 text-sm">กำลังโหลด...</div>
+        {loading ? <div className="p-8 text-center text-slate-400 text-sm flex items-center justify-center gap-2">
+            <span className="w-4 h-4 rounded-full border-2 border-slate-200 border-t-blue-600 animate-spin" />กำลังโหลด...
+          </div>
+        : error ? <div className="p-8 text-center text-sm">
+            <div className="text-red-500 font-semibold mb-2">⚠ โหลดข้อมูลไม่สำเร็จ</div>
+            <div className="text-slate-400 mb-3 break-words">{error}</div>
+            <button onClick={refresh} className="px-4 py-2 bg-slate-800 text-white rounded-lg text-xs font-semibold cursor-pointer">ลองใหม่</button>
+          </div>
         : filtered.length===0 ? <div className="p-8 text-center text-slate-400 text-sm">ไม่พบรายการ</div>
-        : <table className="w-full text-sm">
+        : <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[640px]">
             <thead><tr className="bg-slate-50 border-b-2 border-slate-200">
               {["เลขที่ใบสั่งซื้อ","โรงพยาบาล / แผนก","กำหนดส่ง","สถานะ",""].map(h=>(
                 <th key={h} className="text-left px-4 py-3 text-xs font-bold text-slate-400">{h}</th>
@@ -54,6 +62,7 @@ export default function Orders() {
               </tr>
             ))}</tbody>
           </table>
+          </div>
         }
       </div>
     </div>

@@ -1,30 +1,50 @@
 import { useState, useEffect } from "react";
 import { getUsers, updateUserRole, updateUserActive } from "../lib/firestore";
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
 
 const ROLES = [{v:"admin",l:"ผู้ดูแลระบบ"},{v:"manager",l:"ผู้จัดการ"},{v:"sales",l:"พนักงานขาย"},{v:"warehouse",l:"คลังสินค้า"}];
 const ROLE_COLOR = {admin:"#DC2626",manager:"#2563EB",sales:"#1B2B4B",warehouse:"#0D9488"};
 
 export default function Users() {
   const { user:me, isAdmin } = useAuth();
+  const toast = useToast();
   const [users,   setUsers]   = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState("");
   const [saving,  setSaving]  = useState(null);
 
-  useEffect(()=>{ getUsers().then(u=>{setUsers(u);setLoading(false);}); },[]);
+  function load() {
+    setLoading(true); setError("");
+    getUsers()
+      .then(setUsers)
+      .catch(e=>{ console.error(e); setError(e?.message||"โหลดข้อมูลไม่สำเร็จ"); toast.error(`โหลดรายชื่อผู้ใช้งานไม่สำเร็จ: ${e?.message||e}`); })
+      .finally(()=>setLoading(false));
+  }
+  useEffect(load, []);
 
   async function changeRole(uid, role) {
     setSaving(uid+"role");
-    await updateUserRole(uid, role);
-    setUsers(u=>u.map(x=>x.id===uid?{...x,role}:x));
-    setSaving(null);
+    const toastId = toast.loading("กำลังเปลี่ยนสิทธิ์...");
+    try {
+      await updateUserRole(uid, role);
+      setUsers(u=>u.map(x=>x.id===uid?{...x,role}:x));
+      toast.success("เปลี่ยนสิทธิ์สำเร็จ", { id: toastId });
+    } catch (e) {
+      toast.error(`เปลี่ยนสิทธิ์ไม่สำเร็จ: ${e?.message || e}`, { id: toastId });
+    } finally { setSaving(null); }
   }
 
   async function toggleActive(uid, isActive) {
     setSaving(uid+"active");
-    await updateUserActive(uid, !isActive);
-    setUsers(u=>u.map(x=>x.id===uid?{...x,isActive:!isActive}:x));
-    setSaving(null);
+    const toastId = toast.loading(isActive ? "กำลังปิดบัญชี..." : "กำลังเปิดบัญชี...");
+    try {
+      await updateUserActive(uid, !isActive);
+      setUsers(u=>u.map(x=>x.id===uid?{...x,isActive:!isActive}:x));
+      toast.success(isActive ? "ปิดบัญชีสำเร็จ" : "เปิดบัญชีสำเร็จ", { id: toastId });
+    } catch (e) {
+      toast.error(`ดำเนินการไม่สำเร็จ: ${e?.message || e}`, { id: toastId });
+    } finally { setSaving(null); }
   }
 
   if (!isAdmin) return <div className="text-red-500 text-sm">ไม่มีสิทธิ์เข้าถึงหน้านี้</div>;
@@ -44,8 +64,16 @@ export default function Users() {
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        {loading ? <div className="p-8 text-center text-slate-400">กำลังโหลด...</div>
-        : <table className="w-full text-sm">
+        {loading ? <div className="p-8 text-center text-slate-400 flex items-center justify-center gap-2">
+            <span className="w-4 h-4 rounded-full border-2 border-slate-200 border-t-blue-600 animate-spin" />กำลังโหลด...
+          </div>
+        : error ? <div className="p-8 text-center text-sm">
+            <div className="text-red-500 font-semibold mb-2">⚠ โหลดข้อมูลไม่สำเร็จ</div>
+            <div className="text-slate-400 mb-3 break-words">{error}</div>
+            <button onClick={load} className="px-4 py-2 bg-slate-800 text-white rounded-lg text-xs font-semibold cursor-pointer">ลองใหม่</button>
+          </div>
+        : <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[720px]">
             <thead><tr className="bg-slate-50 border-b-2 border-slate-200">
               {["ชื่อ","อีเมล","บทบาท","LINE Notify","สถานะ","จัดการ"].map(h=>(
                 <th key={h} className="text-left px-4 py-3 text-xs font-bold text-slate-400">{h}</th>
@@ -98,6 +126,7 @@ export default function Users() {
               </tr>
             ))}</tbody>
           </table>
+          </div>
         }
       </div>
     </div>

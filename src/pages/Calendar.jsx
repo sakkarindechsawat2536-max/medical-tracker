@@ -5,7 +5,7 @@ import { STATUS_META } from "../components/StatusPill";
 const WEEKDAYS = ["อา","จ","อ","พ","พฤ","ศ","ส"];
 
 export default function Calendar() {
-  const { orders, loading } = useOrders();
+  const { orders, loading, error, refresh } = useOrders();
   const now   = new Date();
   const year  = now.getFullYear();
   const month = now.getMonth();
@@ -28,17 +28,28 @@ export default function Calendar() {
     return map;
   },[orders, month, year]);
 
-  if (loading) return <div className="text-slate-400">กำลังโหลด...</div>;
+  if (loading) return (
+    <div className="flex items-center gap-2 text-slate-400">
+      <span className="w-4 h-4 rounded-full border-2 border-slate-200 border-t-blue-600 animate-spin" />กำลังโหลด...
+    </div>
+  );
+  if (error) return (
+    <div className="max-w-md">
+      <div className="text-red-500 font-semibold mb-2">⚠ โหลดข้อมูลไม่สำเร็จ</div>
+      <div className="text-sm text-slate-500 mb-4 break-words">{error}</div>
+      <button onClick={refresh} className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-semibold cursor-pointer">ลองใหม่</button>
+    </div>
+  );
 
   return (
     <div>
       <h1 className="text-2xl font-extrabold text-slate-800 mb-1">ปฏิทินกำหนดส่ง</h1>
       <p className="text-sm text-slate-400 mb-5">{monthName}</p>
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-        <div className="grid grid-cols-7 gap-1 mb-2">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-2.5 sm:p-5 overflow-x-auto">
+        <div className="grid grid-cols-7 gap-1 mb-2 min-w-[420px]">
           {WEEKDAYS.map(d=><div key={d} className="text-center text-xs font-bold text-slate-400 py-2">{d}</div>)}
         </div>
-        <div className="grid grid-cols-7 gap-2">
+        <div className="grid grid-cols-7 gap-1 sm:gap-2 min-w-[420px]">
           {Array.from({length:firstDay}).map((_,i)=><div key={"e"+i}/>)}
           {Array.from({length:daysInMonth},(_,i)=>i+1).map(d=>{
             const items = byDay[d]||[];
@@ -52,7 +63,7 @@ export default function Calendar() {
             else if (allDone)    { bg="bg-teal-50 border-teal-300"; }
             else if (items.length>0) { bg="bg-blue-50 border-blue-300"; }
             return (
-              <div key={d} className={`min-h-14 rounded-lg p-1.5 border ${bg} ${isToday?"ring-2 ring-blue-800 ring-offset-1":""}`}>
+              <div key={d} className={`min-h-12 sm:min-h-14 rounded-lg p-1 sm:p-1.5 border ${bg} ${isToday?"ring-2 ring-blue-800 ring-offset-1":""}`}>
                 <div className={`text-xs font-bold ${isToday?"text-blue-800":"text-slate-700"}`}>{d}</div>
                 {items.slice(0,2).map(o=>(
                   <div key={o.id} className="text-[9px] font-semibold mt-0.5 px-1 py-0.5 rounded truncate"

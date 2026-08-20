@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
+import { ToastProvider } from "./context/ToastContext";
 import ProtectedRoute  from "./components/ProtectedRoute";
 import Layout          from "./components/Layout";
 import Login           from "./pages/Login";
@@ -15,6 +16,7 @@ import Users           from "./pages/Users";
 export default function App() {
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL}>
+      <ToastProvider>
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login/>}/>
@@ -31,6 +33,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace/>}/>
         </Routes>
       </AuthProvider>
+      </ToastProvider>
     </BrowserRouter>
   );
 }
