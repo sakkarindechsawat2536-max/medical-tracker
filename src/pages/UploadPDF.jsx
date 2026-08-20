@@ -5,6 +5,7 @@ import { createOrder, getOrderByNumber, addFundOrder } from "../lib/firestore";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { FUND_DEPTS } from "../lib/fundConstants";
+import { isJunkNumber } from "../lib/orderNumber";
 
 // ใช้ worker จาก CDN ตรงกับ version ที่ติดตั้ง (ฟรี ไม่ต้องการ API key)
 pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -78,7 +79,7 @@ function parseKOSINText(rawText) {
     }
   }
   // บาง PDF (เช่นใบสั่งประเภทคลินิก) พิมพ์ "-" เป็นตัวคั่นว่างในช่องนี้แทนเลขจริง — ไม่ใช่เลขที่ใบสั่ง กันไว้ไม่ให้จับผิด
-  if (orderNumber && !/[A-Za-z0-9ก-๙]{2,}/.test(orderNumber)) orderNumber = "";
+  if (isJunkNumber(orderNumber)) orderNumber = "";
   // fallback ด้วย regex กว้างๆ ถ้าหาจากบรรทัดไม่เจอ (รองรับทั้ง PO-xxx และ รพ-xxx)
   if (!orderNumber) orderNumber = findFirst(t, [/\b(PO[\w\-]+)/i, /(รพ[\d\.]+[\d\-]+)/, /UNIT\s+No\.?\s+([\d\-]+)/i]);
   if (!quoteNumber) quoteNumber = findFirst(t, [/([A-Z]\d{2,}[A-Z][\d\-]+)/]);
@@ -296,7 +297,7 @@ async function extractFundFields(b64) {
     const sameRow = wordsNear(noItem.top - 4, noItem.top + 4).filter(w => w.x > noItem.x);
     if (sameRow.length) orderNo = sameRow[0].text.trim();
   }
-  if (orderNo && !/[A-Za-z0-9ก-๙]{2,}/.test(orderNo)) orderNo = ""; // กันค่าขยะ เช่น "-" เดี่ยวๆ ที่พิมพ์เป็นตัวคั่นว่างในฟอร์ม
+  if (isJunkNumber(orderNo)) orderNo = ""; // กันค่าขยะ เช่น "-" เดี่ยวๆ ที่พิมพ์เป็นตัวคั่นว่างในฟอร์ม
 
   // แผนก: หา label ในตารางกลุ่มสินค้าที่มีตัวเลข (เครื่องหมายติ๊ก) ต่อท้ายบนแถวเดียวกัน
   let pdfDeptLabel = null;
@@ -341,7 +342,7 @@ async function extractFundFields(b64) {
 
 function emptyForm() {
   return {
-    orderNumber: "", contractNumber: "", quoteNumber: "",
+    orderNumber: "", contractNumber: "", quoteNumber: "", pdfNo: "",
     orderDate: "", dueDate: "", hospital: "", department: "",
     contactPerson: "", orderTitle: "", notes: "", ownerName: "",
     items: [{ productCode: "", description: "", quantity: 0, unitPrice: 0, totalPrice: 0 }],
@@ -427,6 +428,9 @@ export default function UploadPDF() {
       } catch (fundErr) {
         fund = { dept: "", buyFund: 0, travelFund: 0, orderNo: "", warnings: ["ดึงข้อมูลเงินกันจาก PDF ไม่สำเร็จ: " + fundErr.message] };
       }
+      // เก็บเลขที่จาก label "No." ในไฟล์ไว้แยกต่างหากเสมอ (แม้จะมีเลขที่สัญญา/สั่งซื้ออยู่แล้ว) เพื่อใช้อ้างอิง
+      // และกันไม่ให้ใบสั่งที่ไม่มีเลขที่จริง (เช่น ใบสั่งของคลินิก) ถูกเข้าใจผิดว่าซ้ำกันในหน้ารายการ
+      parsed.pdfNo = fund.orderNo || "";
       if (!parsed.orderNumber && fund.orderNo) {
         parsed.orderNumber = fund.orderNo;
         parsed.contractNumber = fund.orderNo;
