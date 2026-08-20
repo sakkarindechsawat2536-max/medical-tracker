@@ -6,6 +6,7 @@ const NAV = [
   { to:"/",          icon:"⊞",  label:"Dashboard" },
   { to:"/orders",    icon:"📋", label:"ใบสั่งซื้อของฉัน" },
   { to:"/upload",    icon:"⊕",  label:"เพิ่มใบสั่งซื้อ PDF" },
+  { to:"/fund",      icon:"💰", label:"เงินกันซื้ออุปกรณ์" },
   { to:"/calendar",  icon:"📅", label:"ปฏิทินกำหนดส่ง" },
   { to:"/history",   icon:"🕐", label:"ประวัติการส่งมอบ" },
   { to:"/notify",    icon:"🔔", label:"การแจ้งเตือน" },

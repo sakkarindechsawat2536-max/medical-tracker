@@ -12,6 +12,8 @@ import Calendar        from "./pages/Calendar";
 import History         from "./pages/History";
 import Notifications   from "./pages/Notifications";
 import Users           from "./pages/Users";
+import FundDashboard      from "./pages/FundDashboard";
+import FundHospitalDetail from "./pages/FundHospitalDetail";
 
 export default function App() {
   return (
@@ -29,6 +31,8 @@ export default function App() {
             <Route path="history"     element={<History/>}/>
             <Route path="notify"      element={<Notifications/>}/>
             <Route path="users"       element={<Users/>}/>
+            <Route path="fund"           element={<FundDashboard/>}/>
+            <Route path="fund/:hospital" element={<FundHospitalDetail/>}/>
           </Route>
           <Route path="*" element={<Navigate to="/" replace/>}/>
         </Routes>

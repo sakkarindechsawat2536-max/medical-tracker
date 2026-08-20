@@ -113,3 +113,38 @@ export async function getNotifHistory(userId) {
   const snap = await getDocs(query(collection(db,"notifications"), where("userId","==",userId), orderBy("sentAt","desc")));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
+
+// ---------- เงินกันซื้ออุปกรณ์การแพทย์ (fundOrders) ----------
+// เก็บเป็น collection แบนใบเดียว ผูกกับโรงพยาบาลด้วยฟิลด์ hospital (ชื่อเดียวกับ purchaseOrders.hospital)
+// ไม่ query แบบ where+orderBy ผสมกัน (เลี่ยงต้องสร้าง composite index เพิ่ม) — โหลดมาทั้งหมดแล้วกรอง/จัดกลุ่มฝั่ง client แทน
+export async function addFundOrder(hospital, data, userId) {
+  const ref = await addDoc(collection(db, "fundOrders"), {
+    hospital,
+    date: data.date || null,
+    orderNo: data.orderNo || "",
+    dept: data.dept || null,
+    buyFund: Number(data.buyFund) || 0,
+    travelFund: Number(data.travelFund) || 0,
+    cameraFund: Number(data.cameraFund) || 0,
+    deduct: Number(data.deduct) || 0,
+    note: data.note || null,
+    linkedOrderId: data.linkedOrderId || null,
+    createdBy: userId,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+export async function updateFundOrder(id, data) {
+  await updateDoc(doc(db, "fundOrders", id), { ...data, updatedAt: serverTimestamp() });
+}
+
+export async function deleteFundOrder(id) {
+  await deleteDoc(doc(db, "fundOrders", id));
+}
+
+export async function getAllFundOrders() {
+  const snap = await getDocs(query(collection(db, "fundOrders"), orderBy("date", "desc")));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}

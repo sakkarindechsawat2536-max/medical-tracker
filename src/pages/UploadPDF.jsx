@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import * as pdfjsLib from "pdfjs-dist";
-import { createOrder, getOrderByNumber } from "../lib/firestore";
+import { createOrder, getOrderByNumber, addFundOrder } from "../lib/firestore";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
+import { FUND_DEPTS } from "../lib/fundConstants";
 
 // ใช้ worker จาก CDN ตรงกับ version ที่ติดตั้ง (ฟรี ไม่ต้องการ API key)
 pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -245,6 +246,85 @@ async function extractPDFText(b64) {
   return fullText;
 }
 
+// ---- ดึงข้อมูล "เงินกันซื้ออุปกรณ์การแพทย์" จาก PDF ใบเดียวกัน --------------
+// PDF ใบสั่งซื้อของ KOSIN มีข้อมูลเงินกันอยู่ในหน้าเดียวกับใบสั่งซื้อ (เครื่องหมายติ๊กแผนก,
+// ยอด "ค่าใช้จ่ายส่งเสริมการขาย" = เงินกันซื้อของ, ยอด "สก วิชาการ/ดูงาน" = เงินกันค่าเดินทาง)
+// ใช้ตรรกะเดียวกับระบบเงินกันแยกต่างหากที่มีอยู่แล้ว เพื่อให้อัปโหลด PDF ครั้งเดียวสร้างได้ทั้งสองระบบ
+// ต้องอ่านตำแหน่ง x/y ของ text แต่ละชิ้นตรงๆ (ไม่ใช้ fullText ที่ extractPDFText ต่อบรรทัดไว้แล้ว)
+// เพราะต้องเทียบตำแหน่งซ้าย-ขวาบนแถวเดียวกันอย่างละเอียดกว่า
+const PDF_DEPT_MAP = {
+  ANES: "AN", ARTHRO: "ARTHRO", ENT: "ENT", GYN: "GYN", HYGIENE: "HYGIENE",
+  LAP: "LAP", MTP: "MTP", NEURO: "NEURO", OR1: "OR1", SPINE: "SPINE",
+  THORAX: "THORAX", TP: "TP", UNIT: "UNIT", URO: "URO", VET: "VET",
+};
+
+function parseThaiNumber(str) {
+  if (!str) return null;
+  const n = parseFloat(str.replace(/,/g, ""));
+  return isNaN(n) ? null : n;
+}
+
+async function extractFundFields(b64) {
+  const warnings = [];
+  const binary = atob(b64);
+  const bytes  = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+  const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 1 });
+  const textContent = await page.getTextContent();
+
+  function cleanText(s) { return Array.from(s).filter(ch => { const c = ch.codePointAt(0); return !(c >= 0xF700 && c <= 0xF8FF); }).join(""); }
+  const items = textContent.items.map(it => ({
+    text: cleanText(it.str),
+    x: it.transform[4],
+    top: viewport.height - it.transform[5],
+  })).filter(it => it.text && it.text.trim());
+
+  function wordsNear(topMin, topMax) {
+    return items.filter(it => it.top >= topMin && it.top <= topMax).sort((a, b) => a.x - b.x);
+  }
+
+  // แผนก: หา label ในตารางกลุ่มสินค้าที่มีตัวเลข (เครื่องหมายติ๊ก) ต่อท้ายบนแถวเดียวกัน
+  let pdfDeptLabel = null;
+  for (const it of items) {
+    if (Object.keys(PDF_DEPT_MAP).includes(it.text)) {
+      const sameRow = wordsNear(it.top - 4, it.top + 4).filter(w => w.x > it.x && w.x < it.x + 40);
+      if (sameRow.length && /^\d+$/.test(sameRow[0].text.trim())) { pdfDeptLabel = it.text; break; }
+    }
+  }
+  const dept = pdfDeptLabel ? PDF_DEPT_MAP[pdfDeptLabel] : "";
+  if (!dept) warnings.push("ไม่พบเครื่องหมายติ๊กแผนกในไฟล์ (สำหรับเงินกัน) กรุณาเลือกแผนกด้วยตนเอง");
+
+  // เงินกันค่าเดินทาง: ยอดข้าง "สก วิชาการ/ดูงาน"
+  let academicSupport = 0;
+  const academicIdx = items.findIndex(it => it.text === "สก" &&
+    wordsNear(it.top - 4, it.top + 4).some(w => w.text.includes("วิชาการ")));
+  if (academicIdx >= 0) {
+    const row = wordsNear(items[academicIdx].top - 4, items[academicIdx].top + 4);
+    const numTok = row.slice().reverse().find(w => /^[\d,]+\.\d{2}$/.test(w.text.trim()) && w.x < 300);
+    if (numTok) academicSupport = parseThaiNumber(numTok.text) || 0;
+  }
+
+  // เงินกันซื้อของ: ยอดข้าง "ค่าใช้จ่ายส่งเสริมการขาย"
+  let salesPromo = 0;
+  const promoIdx = items.findIndex(it => it.text.includes("คาใชจายสงเสริมการขาย") || it.text.includes("ค่าใช้จ่ายส่งเสริมการขาย"));
+  if (promoIdx >= 0) {
+    const label = items[promoIdx];
+    const row = wordsNear(label.top - 4, label.top + 4).filter(w => w.x > label.x);
+    const numTok = row.find(w => /^[\d,]+\.\d{2}$/.test(w.text.trim()));
+    if (numTok) salesPromo = parseThaiNumber(numTok.text) || 0;
+  }
+
+  const buyFund = Math.round(salesPromo * 100) / 100;
+  const travelFund = Math.round(academicSupport * 100) / 100;
+  if (salesPromo === 0)     warnings.push('ไม่พบยอด "ค่าใช้จ่ายส่งเสริมการขาย" (เงินกันซื้อของ) ในไฟล์ กรุณากรอกด้วยตนเอง');
+  if (academicSupport === 0) warnings.push('ไม่พบยอด "สก วิชาการ/ดูงาน" (เงินกันค่าเดินทาง) ในไฟล์ — เว้นว่างไว้ กรุณาตรวจสอบ');
+
+  return { dept, buyFund, travelFund, warnings };
+}
+
 // ---- empty form template ---------------------------------------------------
 
 function emptyForm() {
@@ -253,6 +333,7 @@ function emptyForm() {
     orderDate: "", dueDate: "", hospital: "", department: "",
     contactPerson: "", orderTitle: "", notes: "", ownerName: "",
     items: [{ productCode: "", description: "", quantity: 0, unitPrice: 0, totalPrice: 0 }],
+    createFund: true, fundDept: "", fundBuy: "", fundTravel: "", fundCamera: "", fundNote: "", fundWarnings: [],
   };
 }
 
@@ -270,6 +351,22 @@ function Field({ label, value, onChange, type = "text", required }) {
         onChange={e => onChange(e.target.value)}
         className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition"
       />
+    </div>
+  );
+}
+
+function SelectField({ label, value, onChange, options }) {
+  return (
+    <div>
+      <label className="text-xs font-semibold text-slate-500 block mb-1">{label}</label>
+      <select
+        value={value || ""}
+        onChange={e => onChange(e.target.value)}
+        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition bg-white"
+      >
+        <option value="">— เลือกแผนก —</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
     </div>
   );
 }
@@ -309,7 +406,20 @@ export default function UploadPDF() {
       setRawText(text);
 
       const parsed = parseKOSINText(text);
-      setForm(parsed);
+
+      // ดึงข้อมูล "เงินกันซื้ออุปกรณ์" จาก PDF ใบเดียวกัน (ไม่ทำให้การอ่านใบสั่งซื้อล้มเหลวถ้าดึงส่วนนี้ไม่ได้)
+      let fund = { dept: "", buyFund: 0, travelFund: 0, warnings: [] };
+      try {
+        fund = await extractFundFields(b64);
+      } catch (fundErr) {
+        fund = { dept: "", buyFund: 0, travelFund: 0, warnings: ["ดึงข้อมูลเงินกันจาก PDF ไม่สำเร็จ: " + fundErr.message] };
+      }
+      setForm({
+        ...parsed,
+        createFund: true,
+        fundDept: fund.dept, fundBuy: fund.buyFund || "", fundTravel: fund.travelFund || "",
+        fundCamera: "", fundNote: "", fundWarnings: fund.warnings,
+      });
 
       // ตรวจว่า parse ได้ข้อมูลหลักครบไหม
       const filled = [parsed.orderNumber, parsed.hospital, parsed.dueDate].filter(Boolean).length;
@@ -358,9 +468,31 @@ export default function UploadPDF() {
         toast.dismiss(checkId);
       }
 
-      const saveId = toast.loading("กำลังบันทึกใบสั่งซื้อ...");
+      const saveId = toast.loading(form.createFund ? "กำลังบันทึกใบสั่งซื้อและรายการเงินกัน..." : "กำลังบันทึกใบสั่งซื้อ...");
       try {
-        await createOrder(form, user.uid);
+        // ตัดฟิลด์ที่เกี่ยวกับ "เงินกัน" ออกก่อน ไม่ให้ปนไปกับข้อมูลใบสั่งซื้อใน purchaseOrders
+        const { createFund, fundDept, fundBuy, fundTravel, fundCamera, fundNote, fundWarnings, ...orderData } = form;
+        const newOrderId = await createOrder(orderData, user.uid);
+
+        if (createFund && form.hospital) {
+          try {
+            await addFundOrder(form.hospital, {
+              date: form.orderDate || form.dueDate || null,
+              orderNo: form.orderNumber,
+              dept: fundDept || null,
+              buyFund: fundBuy || 0,
+              travelFund: fundTravel || 0,
+              cameraFund: fundCamera || 0,
+              deduct: 0,
+              note: fundNote || form.orderTitle || null,
+              linkedOrderId: newOrderId,
+            }, user.uid);
+          } catch (fundErr) {
+            // ใบสั่งซื้อบันทึกสำเร็จแล้ว แต่รายการเงินกันบันทึกไม่สำเร็จ — แจ้งเตือนแยก ไม่ทำให้ทั้งหมดล้มเหลว
+            toast.error("บันทึกใบสั่งซื้อสำเร็จ แต่บันทึกรายการเงินกันไม่สำเร็จ: " + fundErr.message);
+          }
+        }
+
         setStage("done");
         toast.success("บันทึกใบสั่งซื้อสำเร็จ", { id: saveId });
       } catch (e) {
@@ -524,6 +656,32 @@ export default function UploadPDF() {
           </tbody>
         </table>
         </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 mb-4 p-5">
+        <label className="flex items-center gap-2 cursor-pointer mb-4">
+          <input type="checkbox" checked={!!form?.createFund} onChange={e => upd("createFund")(e.target.checked)}
+            className="w-4 h-4 accent-teal-600 cursor-pointer" />
+          <span className="text-sm font-bold text-slate-800">บันทึกเข้าระบบเงินกันซื้ออุปกรณ์การแพทย์ด้วย</span>
+        </label>
+        {form?.createFund && (
+          <>
+            {form?.fundWarnings?.length > 0 && (
+              <ul className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 list-disc pl-8">
+                {form.fundWarnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <SelectField label="แผนก (เงินกัน)" value={form?.fundDept} onChange={upd("fundDept")} options={FUND_DEPTS} />
+              <Field label="เงินกันซื้อของ (฿)"     value={form?.fundBuy}    onChange={upd("fundBuy")}    type="number" />
+              <Field label="เงินกันค่าเดินทาง (฿)"  value={form?.fundTravel} onChange={upd("fundTravel")} type="number" />
+              <Field label="เงินกันกล้อง (฿)"       value={form?.fundCamera} onChange={upd("fundCamera")} type="number" />
+            </div>
+            <div className="mt-3">
+              <Field label="หมายเหตุ (เงินกัน)" value={form?.fundNote} onChange={upd("fundNote")} />
+            </div>
+          </>
+        )}
       </div>
 
       {form?.notes && (

@@ -28,3 +28,34 @@ export function DaysBadge({ dueDate, status }) {
   const label = days < 0 ? `เกิน ${Math.abs(days)} วัน` : days === 0 ? "วันนี้!" : `อีก ${days} วัน`;
   return <span style={{ fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:12, background:bg, color }}>{label}</span>;
 }
+
+// ---- สถานะการเคลียร์เงินกัน (แยกจากสถานะใบสั่งซื้อด้านบน — ความหมายคนละแบบ) ----
+// outstanding: ยังไม่เคลียร์เลย (deduct=0) / partial: เคลียร์บางส่วน / cleared: เคลียร์ครบแล้ว
+export const FUND_STATUS_META = {
+  outstanding: { label:"ค้างเคลียร์",  bg:"#FEE2E2", text:"#DC2626", bar:"#DC2626" },
+  partial:     { label:"เคลียร์บางส่วน", bg:"#FEF3C7", text:"#D97706", bar:"#D97706" },
+  cleared:     { label:"เคลียร์ครบแล้ว", bg:"#CCFBF1", text:"#0D9488", bar:"#0D9488" },
+};
+
+export function fundOrderAllocated(o) {
+  return (o.buyFund||0) + (o.travelFund||0) + (o.cameraFund||0);
+}
+export function fundOrderStatus(o) {
+  const alloc = fundOrderAllocated(o);
+  const ded = o.deduct || 0;
+  if (ded <= 0) return "outstanding";
+  if (ded >= alloc && alloc > 0) return "cleared";
+  if (ded > 0) return "partial";
+  return "outstanding";
+}
+
+export function FundStatusPill({ status }) {
+  const m = FUND_STATUS_META[status] || FUND_STATUS_META.outstanding;
+  return (
+    <span style={{ display:"inline-flex", alignItems:"center", padding:"3px 10px 3px 8px",
+      borderRadius:20, background:m.bg, fontSize:12, fontWeight:600, color:m.text,
+      borderLeft:`3px solid ${m.bar}` }}>
+      {m.label}
+    </span>
+  );
+}

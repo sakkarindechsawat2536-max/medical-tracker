@@ -55,6 +55,14 @@ service cloud.firestore {
       allow delete: if isSignedIn() && (isManager() || isOwnerOfOrder(resource.data.orderId));
     }
 
+    // ---------- fundOrders (เงินกันซื้ออุปกรณ์การแพทย์) ----------
+    match /fundOrders/{fundOrderId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isSignedIn() && (resource.data.createdBy == request.auth.uid || isManager());
+      allow delete: if isSignedIn() && (resource.data.createdBy == request.auth.uid || isManager());
+    }
+
     // ---------- notifications ----------
     match /notifications/{notifId} {
       allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isManager());
