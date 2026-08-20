@@ -1,6 +1,6 @@
-import { initializeApp, cert } from "firebase-admin/app";
-import { getFirestore }        from "firebase-admin/firestore";
-import nodemailer              from "nodemailer";
+import { initializeApp, cert }       from "firebase-admin/app";
+import { getFirestore, FieldValue }  from "firebase-admin/firestore";
+import nodemailer                    from "nodemailer";
 
 // ---- Firebase init ---------------------------------------------------------
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
@@ -30,9 +30,22 @@ async function sendEmail(to, subject, html) {
 
 // ---- logic -----------------------------------------------------------------
 const THRESHOLDS = [30, 15, 7, 3, 1];
+const THRESHOLD_TOKENS = { 30: "d30", 15: "d15", 7: "d7", 3: "d3", 1: "d1" };
+// ค่าเริ่มต้นถ้าผู้ใช้ยังไม่เคยกด "บันทึกการตั้งค่า" ในหน้าการแจ้งเตือนเลย (ตรงกับค่าเริ่มต้นฝั่งหน้าเว็บ)
+const DEFAULT_SCHEDULE = ["d30", "d15", "d7", "d3", "d1", "overdue"];
 
 function daysUntil(d) {
   return Math.ceil((new Date(d) - new Date()) / 86_400_000);
+}
+
+// GitHub Actions รัน workflow นี้ทุกชั่วโมง (UTC) — เทียบแค่ "ชั่วโมง" เวลาไทย (UTC+7) กับที่ผู้ใช้ตั้งไว้
+// เพื่อให้แต่ละคนได้รับแจ้งเตือนใกล้เคียงเวลาที่ตั้งเองในหน้าเว็บ (ความละเอียดระดับชั่วโมง ไม่ใช่นาที)
+function currentThaiHour() {
+  return (new Date().getUTCHours() + 7) % 24;
+}
+function userNotifyHour(user) {
+  const h = parseInt((user.notifyTime || "08:00").split(":")[0], 10);
+  return isNaN(h) ? 8 : h;
 }
 
 async function run() {
@@ -46,6 +59,9 @@ async function run() {
   const orders = Object.fromEntries(ordersSnap.docs.map(d => [d.id, d.data()]));
   console.log(`📋 พบ ${itemsSnap.size} รายการที่ยังไม่ส่งครบ`);
 
+  const thaiHour = currentThaiHour();
+  console.log(`🕐 ชั่วโมงปัจจุบัน (ไทย): ${thaiHour}:00`);
+
   let sent = 0;
   for (const docSnap of itemsSnap.docs) {
     const item  = docSnap.data();
@@ -57,9 +73,19 @@ async function run() {
     if (!THRESHOLDS.includes(days) && days >= 0) continue;
 
     const user = users[order.ownerId];
-    if (!user?.email) continue;
+    if (!user) continue;
+    if (user.isActive === false) continue;              // แอดมินปิดการใช้งานบัญชีนี้ไว้
+    if (user.emailNotify === false) continue;            // ผู้ใช้ปิดสวิตช์แจ้งเตือนทางอีเมลไว้ในหน้าการแจ้งเตือน
+    if (userNotifyHour(user) !== thaiHour) continue;      // ยังไม่ถึงชั่วโมงที่ผู้ใช้คนนี้ตั้งไว้
 
     const isOverdue = days < 0;
+    const token = isOverdue ? "overdue" : THRESHOLD_TOKENS[days];
+    const schedule = Array.isArray(user.notifySchedule) ? user.notifySchedule : DEFAULT_SCHEDULE;
+    if (!schedule.includes(token)) continue;              // ผู้ใช้ไม่ได้ติ๊กเลือกรอบแจ้งเตือนนี้ไว้
+
+    const to = user.notifyEmail || user.email;            // ใช้อีเมลปลายทางที่ตั้งไว้ ถ้าไม่ได้ตั้งจะใช้อีเมล Login แทน
+    if (!to) continue;
+
     const subject = isOverdue
       ? `⚠️ เกินกำหนด ${Math.abs(days)} วัน — ${order.hospital}`
       : `🔔 เหลืออีก ${days} วัน — ${order.hospital}`;
@@ -108,11 +134,20 @@ async function run() {
 </div>`;
 
     try {
-      const msgId = await sendEmail(user.email, subject, html);
-      console.log(`✅ ส่งถึง ${user.email} — ${msgId}`);
+      const msgId = await sendEmail(to, subject, html);
+      console.log(`✅ ส่งถึง ${to} — ${msgId}`);
       sent++;
+      try {
+        await db.collection("notifications").add({
+          userId: order.ownerId, channel: "email", orderId: item.orderId,
+          type: token, sentAt: FieldValue.serverTimestamp(),
+        });
+      } catch (histErr) {
+        // ส่งอีเมลสำเร็จแล้ว แค่บันทึกประวัติไม่สำเร็จ — ไม่ทำให้ทั้งรอบล้มเหลว
+        console.error("⚠ บันทึกประวัติการแจ้งเตือนไม่สำเร็จ:", histErr.message);
+      }
     } catch (e) {
-      console.error(`❌ ส่งถึง ${user.email} ไม่สำเร็จ:`, e.message);
+      console.error(`❌ ส่งถึง ${to} ไม่สำเร็จ:`, e.message);
     }
   }
 
